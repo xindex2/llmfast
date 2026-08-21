@@ -118,7 +118,24 @@ else
   # Deliberately not quiet. A silent multi-gigabyte download is indistinguishable
   # from a stuck process, and the temptation is to Ctrl-C a working install.
   pip install --upgrade pip
-  pip install vllm
+
+  # Pin torch to whatever the image already ships and let pip pick a vLLM that
+  # accepts it, rather than taking the newest vLLM and letting it drag in a
+  # torch the driver cannot run.
+  #
+  # This is not hypothetical. A pod on driver CUDA 12.8 running
+  # runpod/pytorch:...-cu1281-torch280 installed vLLM 0.27, which requires
+  # torch 2.13 -- a version that exists only for CUDA 13. Every engine then
+  # exited with "The NVIDIA driver on your system is too old", and unpicking it
+  # cost hours.
+  TORCH_PIN=""
+  if HAVE_TORCH=$(python3 -c "import torch; print(torch.__version__.split('+')[0])" 2>/dev/null); then
+    TORCH_PIN="torch==$HAVE_TORCH"
+    echo "pinning to the image's torch $HAVE_TORCH so the driver stays satisfied"
+  fi
+  # shellcheck disable=SC2086
+  pip install vllm $TORCH_PIN
+
   # Several base images export HF_HUB_ENABLE_HF_TRANSFER=1 without shipping the
   # package, and the download then refuses to start. It is also genuinely
   # faster on a 20GB checkpoint, so install it rather than turn it off.
@@ -142,6 +159,22 @@ if python3 -c "import torch" 2>/dev/null; then
     echo "  matching the driver's CUDA version before going further."
   fi
 fi
+
+# Editing a pod in the RunPod console recreates the container from its image,
+# which keeps /workspace and discards everything installed into the system
+# Python. Recording the working versions here turns that from an afternoon of
+# rediscovery into one command.
+{
+  echo "# Written by setup-pod.sh. These versions were verified working on this host."
+  echo "# After a pod reset, restore the environment with:"
+  echo "#   pip install $(python3 -c "import vllm; print('vllm=='+vllm.__version__)" 2>/dev/null || echo vllm) \\"
+  echo "#     $(python3 -c "import torch; print('torch=='+torch.__version__.split('+')[0])" 2>/dev/null || echo torch) hf_transfer"
+  echo "driver_cuda=$(nvidia-smi 2>/dev/null | sed -nE 's/.*CUDA Version:[[:space:]]*([0-9.]+).*/\1/p' | head -1)"
+  echo "torch=$(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null)"
+  echo "torch_cuda=$(python3 -c 'import torch; print(torch.version.cuda)' 2>/dev/null)"
+  echo "vllm=$(python3 -c 'import vllm; print(vllm.__version__)' 2>/dev/null)"
+} > "$WORKDIR/versions.lock" 2>/dev/null || true
+echo "recorded working versions in $WORKDIR/versions.lock"
 
 say "cloudflared"
 if ! command -v cloudflared >/dev/null 2>&1; then
