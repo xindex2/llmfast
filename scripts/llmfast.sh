@@ -221,9 +221,15 @@ status() {
   probe "gateway  127.0.0.1:8080" http://127.0.0.1:8080/health
   probe "admin    127.0.0.1:8090" http://127.0.0.1:8090/
 
+  # The first ingress entry is the public API.
+  local api_host
+  api_host=$(grep -m1 -E 'hostname:' /root/.cloudflared/config.yml 2>/dev/null |
+             sed -E 's/.*hostname:[[:space:]]*//')
+
   # The public hostname is the one that decides whether OpenRouter can reach us.
   local host
-  host=$(grep -m1 -E '^\s*hostname:' /root/.cloudflared/config.yml 2>/dev/null | awk '{print $2}')
+  host=$(grep -m1 -E 'hostname:' /root/.cloudflared/config.yml 2>/dev/null |
+         sed -E 's/.*hostname:[[:space:]]*//')
   [ -n "${host:-}" ] && probe "public   $host" "https://$host/v1/models"
 
   # An admin hostname on the tunnel with nothing in front of it is the most
@@ -232,8 +238,12 @@ status() {
   # token is one guess away from all of it, and it is reachable from anywhere.
   local admin_host
   admin_host=$(grep -B1 'service: http://127.0.0.1:8090' /root/.cloudflared/config.yml 2>/dev/null |
-               grep -m1 -E 'hostname:' | awk '{print $2}')
-  if [ -n "${admin_host:-}" ]; then
+               grep -m1 -E 'hostname:' | sed -E 's/.*hostname:[[:space:]]*//')
+  case "${admin_host:-}" in
+    *.*) ;;            # looks like a hostname
+    *) admin_host="" ;; # anything else failed to parse; do not report it
+  esac
+  if [ -n "$admin_host" ]; then
     say "Admin exposure"
     local loc
     loc=$(curl -s -o /dev/null -w '%{redirect_url}' --max-time 8 "https://$admin_host/" 2>/dev/null)
@@ -246,7 +256,7 @@ status() {
       echo "      history, and the ability to stop your models."
       echo
       echo "      Simplest fix -- stop publishing it, and use SSH instead:"
-      echo "        bash $REPO/scripts/setup-tunnel.sh ${TUNNEL} $(grep -m1 -A1 'ingress:' /root/.cloudflared/config.yml 2>/dev/null | grep hostname | awk '{print $3}')"
+      echo "        bash $REPO/scripts/setup-tunnel.sh ${TUNNEL} ${api_host:-api.example.com}"
       echo "        bash $REPO/scripts/llmfast.sh restart"
       echo "      then from your own machine:"
       echo "        ssh -L 8090:127.0.0.1:8090 root@<pod-ip> -p <pod-port>"
@@ -353,9 +363,15 @@ for line in read(os.path.join(work, "config.yaml")).splitlines():
 
 env = {}
 for line in read(os.path.join(work, "llmfast.env")).splitlines():
-    if "=" in line and not line.lstrip().startswith("#"):
-        k, v = line.split("=", 1)
-        env[k.strip()] = unquote(v)
+    line = line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    # The file is meant to be sourced, so every line reads "export NAME=value".
+    # "export " is shell syntax, not part of the name.
+    if line.startswith("export "):
+        line = line[len("export "):]
+    k, v = line.split("=", 1)
+    env[k.strip()] = unquote(v)
 
 # A leading $ means "read this from the environment", which is why a token that
 # genuinely begins with $ cannot be written straight into config.yaml.
