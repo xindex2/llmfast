@@ -2,7 +2,9 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -87,7 +89,7 @@ func (s *Server) AdminHandler() http.Handler {
 
 	sub, err := fs.Sub(uiFS, "ui")
 	if err == nil {
-		mux.Handle("GET /", http.FileServer(http.FS(sub)))
+		mux.Handle("GET /", staticHandler(sub))
 	}
 	return s.withRecovery(mux)
 }
@@ -350,4 +352,50 @@ func (s *Server) adminToggleKey(w http.ResponseWriter, r *http.Request) {
 	// cache TTL, which matters when disabling a leaked key.
 	s.keys.purge()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// staticHandler serves the embedded admin UI with a content-addressed ETag.
+//
+// http.FileServer alone is not enough here. Files inside an embed.FS have a
+// zero modification time, so it cannot send Last-Modified, and a browser with
+// no validator of any kind falls back to heuristic caching -- it decides for
+// itself how long the asset stays fresh. The visible symptom is an admin UI
+// that keeps rendering the previous build after an upgrade, including buttons
+// that were added and text that was changed, with nothing in the deploy output
+// to suggest anything is wrong.
+//
+// Hashing the contents gives an exact validator. "no-cache" is not "do not
+// store": it means the cached copy may be reused, but only after revalidating,
+// so unchanged assets still come back as an empty 304.
+func staticHandler(root fs.FS) http.Handler {
+	etags := map[string]string{}
+	_ = fs.WalkDir(root, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		b, err := fs.ReadFile(root, path)
+		if err != nil {
+			return nil
+		}
+		sum := sha256.Sum256(b)
+		etags["/"+path] = `"` + hex.EncodeToString(sum[:8]) + `"`
+		return nil
+	})
+
+	files := http.FileServer(http.FS(root))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if p == "/" {
+			p = "/index.html"
+		}
+		if tag, ok := etags[p]; ok {
+			w.Header().Set("ETag", tag)
+			w.Header().Set("Cache-Control", "no-cache")
+			if match := r.Header.Get("If-None-Match"); match == tag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+		files.ServeHTTP(w, r)
+	})
 }
