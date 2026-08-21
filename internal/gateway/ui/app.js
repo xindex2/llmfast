@@ -725,7 +725,14 @@ function renderInspectResult(d) {
       <div class="row" style="margin-top:14px">
         <label class="live"><input type="checkbox" id="f-tools" checked> Supports tools</label>
         <label class="live"><input type="checkbox" id="f-reasoning"> Reasoning model</label>
+        <label class="live"><input type="checkbox" id="f-zdr" checked> Zero data retention</label>
       </div>
+      <p class="hint" style="margin-top:8px">
+        This gateway never writes prompt or completion content to disk, so zero data
+        retention is accurate by default. It is published as <code>compliance.zdr</code>
+        and must match what your privacy policy says — uncheck it if you log prompts
+        anywhere in your stack.
+      </p>
     </div>
 
     ${d.gguf_candidates && d.gguf_candidates.length ? `
@@ -807,6 +814,7 @@ async function installOnNode(node, d) {
     prompt_usd: perTok('f-prompt'), completion_usd: perTok('f-completion'), cached_usd: perTok('f-cached'),
     tools: document.getElementById('f-tools').checked,
     reasoning: document.getElementById('f-reasoning').checked,
+    zdr: document.getElementById('f-zdr').checked,
   };
 
   const out = document.getElementById('install-out');

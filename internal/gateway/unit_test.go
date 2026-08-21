@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/llmfast/gateway/internal/config"
+	"github.com/llmfast/gateway/internal/modeldoc"
 )
 
 func TestEnsureUsage(t *testing.T) {
@@ -420,5 +423,30 @@ func TestUpstreamErrorMessageIsBounded(t *testing.T) {
 	// And a giant non-envelope body is capped too.
 	if n := len(upstreamErrorMessage([]byte(strings.Repeat("x", 5000)))); n > 210 {
 		t.Errorf("raw body stored %d characters, want it capped", n)
+	}
+}
+
+// TestInstallPublishesCompliance: a model added through the admin UI must carry
+// the retention flag the operator chose. Defaulting it to false silently
+// contradicts a privacy policy that claims zero retention, and the contradiction
+// is only visible by reading /v1/models.
+func TestInstallPublishesCompliance(t *testing.T) {
+	req := InstallRequest{
+		Node: "gpu-a", HFID: "Qwen/Qwen3.8-27B", ModelID: "qwen/qwen3.8-27b",
+		Engine: "vllm", MaxModelLen: 16384, MaxNumSeqs: 13, ZDR: true,
+	}
+	ready := false
+	m := config.Model{
+		ID: req.ModelID, Backends: []string{req.Node},
+		ContextLength: req.MaxModelLen,
+		Compliance:    config.Compliance{ZDR: req.ZDR, HIPAA: req.HIPAA},
+		IsReady:       &ready,
+	}
+	doc := modeldoc.BuildOne(&m)
+	if doc.Compliance == nil || !doc.Compliance.ZDR {
+		t.Error("compliance.zdr must reach the published model document")
+	}
+	if doc.Compliance.HIPAA {
+		t.Error("HIPAA must not be claimed unless explicitly set")
 	}
 }

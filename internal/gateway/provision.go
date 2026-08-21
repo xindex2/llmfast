@@ -137,6 +137,12 @@ type InstallRequest struct {
 
 	Tools     bool `json:"tools"`
 	Reasoning bool `json:"reasoning"`
+	// ZDR publishes compliance.zdr on the model. It must match what your
+	// privacy policy says: declaring zero retention while logging prompts is a
+	// misrepresentation, and declaring false while operating ZDR costs you
+	// enterprise customers who filter on it.
+	ZDR   bool `json:"zdr"`
+	HIPAA bool `json:"hipaa"`
 	// StageHidden writes is_ready:false so OpenRouter keeps the model hidden
 	// until it has been verified.
 	StageHidden bool `json:"stage_hidden"`
@@ -199,9 +205,10 @@ func (s *Server) adminInstall(w http.ResponseWriter, r *http.Request) {
 		Pricing: config.Pricing{
 			Prompt: req.PromptUSD, Completion: req.CompletionUSD, CachedPrompt: req.CachedUSD,
 		},
-		Capacity: config.Capacity{Concurrency: req.MaxNumSeqs},
-		Features: config.Features{Tools: req.Tools, Reasoning: req.Reasoning},
-		IsReady:  &ready,
+		Capacity:   config.Capacity{Concurrency: req.MaxNumSeqs},
+		Features:   config.Features{Tools: req.Tools, Reasoning: req.Reasoning},
+		Compliance: config.Compliance{ZDR: req.ZDR, HIPAA: req.HIPAA},
+		IsReady:    &ready,
 	}
 	path, err := config.WriteModel(s.modelDir, m)
 	if err != nil {
