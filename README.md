@@ -306,8 +306,20 @@ pod to confirm.
 bash /workspace/llmfast/scripts/llmfast.sh start
 ```
 
-That launches the agent, the gateway and the tunnel inside one tmux session and
-detaches. **You can close the terminal and the browser — they keep running.**
+That checks everything first, then launches the agent, the gateway and the
+tunnel as detached processes. **You can close the terminal and the browser —
+they keep running.**
+
+If something is wrong it says so before starting anything:
+
+```
+==> Checking
+  ✓ dist/llmfast
+  ✓ dist/llmfast-agent
+  ✓ llmfast.env
+  ✓ config.yaml
+  ✗ port 9900 is held by an older llmfast process — run: bash scripts/llmfast.sh stop
+```
 
 The first run prints an API key. Save it; it is shown once and only its hash is
 stored.
@@ -317,32 +329,36 @@ Four commands are all you need afterwards:
 | | |
 |---|---|
 | `llmfast.sh status` | what is running, and whether each part answers |
-| `llmfast.sh logs` | attach to the live output (`Ctrl-b` then `d` to leave) |
+| `llmfast.sh logs` | follow all three logs (Ctrl-C to stop watching) |
 | `llmfast.sh restart` | after a `git pull && make build` |
-| `llmfast.sh stop` | shut it all down |
+| `llmfast.sh stop` | shut it all down, strays included |
 
 `status` is the one to reach for. It checks the agent, the gateway, the admin UI
-and your public hostname, and lists the installed models with their context
-lengths:
+and your public hostname, and lists the installed models:
 
 ```
 ==> Processes
-  agent: running (1 pane)
-  gateway: running (1 pane)
-  tunnel: running (1 pane)
+  ✓ agent    pid 10468
+  ✓ gateway  pid 10486
+  ✓ tunnel   pid 10502
 
 ==> Health
-  agent    :9900          ok
-  gateway  :8080          ok
-  admin    :8090          ok
-  public   api.llmfa.st   ok
+  ✓ agent    127.0.0.1:9900
+  ✓ gateway  127.0.0.1:8080
+  ✓ admin    127.0.0.1:8090
+  ✓ public   api.llmfa.st
 
 ==> Models
-  qwen/qwen3.8-27b         ready=true  ctx=32,768
+  qwen/qwen3.8-27b-fp8         ready=true  ctx=32,768
 ```
 
-**A pod restart stops everything** — tmux does not survive it. Run
-`llmfast.sh start` again and you are back.
+If a process died, `status` prints the tail of its log instead of just saying
+it is gone. Everything is written to `/workspace/logs/`, so a crash at 3am is
+still readable the next morning.
+
+**A pod restart stops everything.** Run `llmfast.sh start` again and you are
+back — your models, config, database and downloaded weights all live in
+`/workspace`, which survives.
 
 ### 4. 🖥️ Point api.llmfa.st at it
 
@@ -480,8 +496,8 @@ In the admin UI:
 
 ### Running it day to day
 
-Nothing needs to stay open on your laptop. The three processes live in a tmux
-session on the pod:
+Nothing needs to stay open on your laptop. The three processes run detached on
+the pod, writing to `/workspace/logs/`:
 
 ```bash
 # 🖥️ ON THE POD
@@ -492,7 +508,7 @@ bash /workspace/llmfast/scripts/llmfast.sh restart   # after an upgrade
 
 Close the browser, shut the laptop, go to bed. The pod carries on.
 
-**After a pod restart**, tmux is gone with everything else, so run:
+**After a pod restart**, nothing is running, so start it again:
 
 ```bash
 # 🖥️ ON THE POD
