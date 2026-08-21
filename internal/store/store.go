@@ -70,6 +70,28 @@ CREATE TABLE IF NOT EXISTS api_keys (
   rpm_limit   INTEGER NOT NULL DEFAULT 0
 );
 
+-- Dashboard accounts. Separate from api_keys: those are machine credentials
+-- and are stored as a plain hash of a random secret, whereas these are chosen
+-- by a person and need a slow KDF.
+CREATE TABLE IF NOT EXISTS admin_users (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  email         TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  last_login    INTEGER NOT NULL DEFAULT 0
+);
+
+-- Only the hash of a session token is kept, so the database is not a source of
+-- live sessions if it leaks.
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON admin_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS requests (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   ts                INTEGER NOT NULL,

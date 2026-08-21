@@ -150,25 +150,58 @@ func (rl *rateLimiter) sweep() {
 	rl.mu.Unlock()
 }
 
-// requireAdmin gates the admin surface with a constant-time token comparison.
+// requireAdmin gates the admin surface.
+//
+// Two credentials are accepted, for two different callers. A person signs in
+// with an email and password and carries a session cookie; a script sends the
+// configured bearer token. Sessions can be listed, expired and revoked one at
+// a time, which a single shared token cannot be, so the token is not offered
+// as a way to sign into the UI once any account exists.
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if u, ok := s.sessionUser(r); ok {
+		_ = u
+		return true
+	}
+
 	want := s.cfg.Server.AdminToken
-	if want == "" {
-		writeError(w, http.StatusForbidden, "config_error",
-			"Admin token is not configured. Set server.admin_token or LLMFAST_ADMIN_TOKEN.")
-		return false
-	}
 	got := store.ExtractBearer(r.Header.Get("Authorization"))
-	if got == "" {
-		// The UI is a plain page load, so it cannot set a header; it passes the
-		// token as a cookie set at login instead.
-		if c, err := r.Cookie("llmfast_admin"); err == nil {
-			got = c.Value
-		}
+	if want != "" && got != "" &&
+		subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1 {
+		return true
 	}
-	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-		writeError(w, http.StatusUnauthorized, "authentication_error", "Invalid admin token.")
+
+	// Say which credentials would actually work here, rather than a flat
+	// "unauthorized" that leaves an operator guessing.
+	if want == "" && !s.hasAdminUsers() {
+		writeError(w, http.StatusForbidden, "config_error",
+			"No admin account exists and no admin token is configured. "+
+				"Create an account with: llmfast -config <file> -add-admin <email>")
 		return false
 	}
-	return true
+	writeError(w, http.StatusUnauthorized, "authentication_error", "Not signed in.")
+	return false
+}
+
+// sessionUser resolves the session cookie, if there is a valid one.
+func (s *Server) sessionUser(r *http.Request) (store.AdminUser, bool) {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil || c.Value == "" {
+		return store.AdminUser{}, false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	u, err := s.store.LookupSession(ctx, c.Value)
+	if err != nil {
+		return store.AdminUser{}, false
+	}
+	return u, true
+}
+
+// hasAdminUsers reports whether any account exists, so the login page can offer
+// the right thing and requireAdmin can explain itself.
+func (s *Server) hasAdminUsers() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	n, err := s.store.CountAdminUsers(ctx)
+	return err == nil && n > 0
 }

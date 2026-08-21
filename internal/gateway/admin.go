@@ -87,6 +87,17 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("DELETE /admin/api/keys/{id}", s.guard(s.adminDeleteKey))
 	mux.HandleFunc("POST /admin/api/keys/{id}/toggle", s.guard(s.adminToggleKey))
 
+	// Unauthenticated: the login page needs to know what to render, and the
+	// first-run form has no credentials to present yet.
+	mux.HandleFunc("GET /admin/api/auth", s.adminAuthState)
+	mux.HandleFunc("POST /admin/api/setup", s.adminSetup)
+	mux.HandleFunc("POST /admin/api/logout", s.adminLogout)
+
+	mux.HandleFunc("GET /admin/api/users", s.guard(s.adminListUsers))
+	mux.HandleFunc("POST /admin/api/users", s.guard(s.adminCreateUser))
+	mux.HandleFunc("POST /admin/api/users/password", s.guard(s.adminChangePassword))
+	mux.HandleFunc("DELETE /admin/api/users/{id}", s.guard(s.adminDeleteUser))
+
 	sub, err := fs.Sub(uiFS, "ui")
 	if err == nil {
 		mux.Handle("GET /", staticHandler(sub))
@@ -101,26 +112,6 @@ func (s *Server) guard(h http.HandlerFunc) http.HandlerFunc {
 		}
 		h(w, r)
 	}
-}
-
-func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Token string `json:"token"`
-	}
-	_ = decodeJSON(r, &body)
-	if s.cfg.Server.AdminToken == "" || body.Token != s.cfg.Server.AdminToken {
-		writeError(w, http.StatusUnauthorized, "authentication_error", "Invalid admin token.")
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "llmfast_admin",
-		Value:    body.Token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int((12 * time.Hour).Seconds()),
-	})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {

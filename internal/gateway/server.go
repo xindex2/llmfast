@@ -31,7 +31,10 @@ type Server struct {
 	catalog *Catalog
 	keys    *keyCache
 	limiter *rateLimiter
-	log     *slog.Logger
+	// logins throttles admin password attempts, which -- unlike API keys --
+	// are guessable and reachable from the internet.
+	logins *loginLimiter
+	log    *slog.Logger
 
 	// Provisioning: talking to node agents and resolving models on HuggingFace.
 	nodes *NodeManager
@@ -59,6 +62,7 @@ func New(cfg *config.Config, st *store.Store, pool *upstream.Pool, log *slog.Log
 		catalog:   NewCatalog(cfg),
 		keys:      newKeyCache(),
 		limiter:   newRateLimiter(),
+		logins:    newLoginLimiter(),
 		log:       log,
 		hf:        modelspec.NewClient(os.Getenv("HF_TOKEN")),
 		startedAt: time.Now(),
@@ -255,6 +259,11 @@ func (s *Server) StartBackground(ctx context.Context) {
 					s.log.Error("rollup failed", "err", err)
 				}
 			case <-purge.C:
+				// Expired sessions never resolve, but they would otherwise
+				// accumulate a row per sign-in forever.
+				if err := s.store.PurgeExpiredSessions(ctx); err != nil {
+					s.log.Error("purge expired sessions failed", "err", err)
+				}
 				cutoff := time.Now().AddDate(0, 0, -s.cfg.Server.RawRetentionDays)
 				// Roll up the full retention window before deleting, so nothing
 				// is dropped from the raw log before it has been aggregated.

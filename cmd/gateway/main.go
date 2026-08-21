@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config/config.yaml", "path to config file")
+	addAdmin := flag.String("add-admin", "", "create or reset a dashboard account for this email, then exit")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -45,6 +48,14 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	if *addAdmin != "" {
+		if err := manageAdmin(ctx, st, *addAdmin); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	bootstrapKey(ctx, st, log)
 
@@ -168,4 +179,65 @@ func bootstrapKey(ctx context.Context, st *store.Store, log *slog.Logger) {
 	fmt.Printf("\n  No API keys found. Created one for you:\n\n    %s\n\n"+
 		"  This is shown once and only its hash is stored. Save it now.\n"+
 		"  Manage keys at the admin UI (key id %d).\n\n", secret, key.ID)
+}
+
+// manageAdmin creates a dashboard account, or resets the password of one that
+// already exists.
+//
+// The password is read from the terminal rather than taken as a flag, because
+// a flag would put it in the shell history and in the process list, where
+// anyone else on the machine can read it.
+func manageAdmin(ctx context.Context, st *store.Store, email string) error {
+	fmt.Printf("Password for %s: ", email)
+	pw, err := readPassword()
+	if err != nil {
+		return err
+	}
+	fmt.Print("Repeat it: ")
+	again, err := readPassword()
+	if err != nil {
+		return err
+	}
+	if pw != again {
+		return errors.New("the two passwords do not match")
+	}
+
+	_, err = st.CreateAdminUser(ctx, email, pw)
+	switch {
+	case err == nil:
+		fmt.Printf("\nCreated %s. Sign in at the admin URL with that email and password.\n", email)
+		return nil
+	case errors.Is(err, store.ErrUserExists):
+		if err := st.SetAdminPassword(ctx, email, pw); err != nil {
+			return err
+		}
+		fmt.Printf("\nPassword reset for %s. Any existing sessions were signed out.\n", email)
+		return nil
+	default:
+		return err
+	}
+}
+
+// stdin is read through one shared buffered reader. A fresh bufio.Reader per
+// call would buffer everything available and then hand the next call EOF,
+// which broke the confirmation prompt whenever input was piped.
+var stdin = bufio.NewReader(os.Stdin)
+
+// readPassword reads a line without echoing it, falling back to a plain read
+// when stdin is not a terminal -- which is what makes the command scriptable
+// as `echo "$PW" | llmfast -add-admin you@example.com`.
+func readPassword() (string, error) {
+	fd := int(os.Stdin.Fd())
+	restore, err := disableEcho(fd)
+	if err == nil {
+		defer restore()
+	}
+	line, err := stdin.ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
+	if restore != nil {
+		fmt.Println()
+	}
+	return strings.TrimRight(line, "\r\n"), nil
 }

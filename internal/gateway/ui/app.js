@@ -18,7 +18,7 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-const state = { view: 'overview', range: '24h', timer: null, secret: null };
+const state = { view: 'overview', range: '24h', timer: null, secret: null, email: null };
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -1462,7 +1462,103 @@ const VIEWS = {
   keys: renderKeys,
   modeldoc: renderModelDoc,
   guides: renderGuides,
+  account: renderAccount,
 };
+
+// ---------------------------------------------------------------------------
+// Account
+// ---------------------------------------------------------------------------
+
+async function renderAccount() {
+  const d = await api('/admin/api/users');
+  const users = d.users || [];
+  main().innerHTML = `<h2>Account</h2>
+    <p class="muted" style="margin-top:-8px;margin-bottom:14px">
+      Signed in as <strong>${esc(d.me || '—')}</strong>. Sessions last 12 hours.</p>
+
+    <div class="step">
+      <h3>Change your password</h3>
+      <p class="hint">Changing it signs out every other browser holding a session for this account.</p>
+      <div class="field"><label>Current password</label>
+        <input type="password" id="pw-old" autocomplete="current-password"></div>
+      <div class="field"><label>New password</label>
+        <input type="password" id="pw-new" autocomplete="new-password" placeholder="at least 10 characters"></div>
+      <button class="primary" id="pw-save">Change password</button>
+      <div id="pw-out"></div>
+    </div>
+
+    <div class="step">
+      <h3>Dashboard accounts</h3>
+      <div class="tablewrap"><table><thead><tr>
+        <th>Email</th><th>Added</th><th>Last signed in</th><th></th>
+      </tr></thead><tbody>${users.map(u => `<tr>
+        <td class="mono">${esc(u.email)}</td>
+        <td class="muted">${fmtTime(u.created_at)}</td>
+        <td class="muted">${u.last_login ? fmtTime(u.last_login) : 'never'}</td>
+        <td>${u.email === d.me ? '<span class="muted">you</span>'
+              : `<button class="danger" data-deluser="${u.id}" data-email="${esc(u.email)}">Remove</button>`}</td>
+      </tr>`).join('')}</tbody></table></div>
+
+      <div class="row" style="margin-top:14px;gap:10px;align-items:flex-end">
+        <div class="field" style="margin:0"><label>Email</label>
+          <input type="email" id="nu-email" placeholder="teammate@example.com"></div>
+        <div class="field" style="margin:0"><label>Password</label>
+          <input type="password" id="nu-pass" autocomplete="new-password" placeholder="at least 10 characters"></div>
+        <button id="nu-add">Add account</button>
+      </div>
+      <div id="nu-out"></div>
+    </div>
+
+    <div class="step">
+      <h3>Sign out</h3>
+      <button class="danger" id="signout">Sign out of this browser</button>
+    </div>`;
+
+  const note = (id, cls, msg) =>
+    document.getElementById(id).innerHTML = `<div class="note ${cls}">${esc(msg)}</div>`;
+
+  document.getElementById('pw-save').onclick = async () => {
+    try {
+      await api('/admin/api/users/password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_password: document.getElementById('pw-old').value,
+          new_password: document.getElementById('pw-new').value,
+        }),
+      });
+      document.getElementById('pw-old').value = '';
+      document.getElementById('pw-new').value = '';
+      note('pw-out', 'ok', 'Password changed. Other sessions were signed out.');
+    } catch (e) { note('pw-out', 'block', e.message); }
+  };
+
+  document.getElementById('nu-add').onclick = async () => {
+    try {
+      await api('/admin/api/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: document.getElementById('nu-email').value.trim(),
+          password: document.getElementById('nu-pass').value,
+        }),
+      });
+      renderAccount();
+    } catch (e) { note('nu-out', 'block', e.message); }
+  };
+
+  main().querySelectorAll('[data-deluser]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Remove ${b.dataset.email}? They will be signed out immediately.`)) return;
+    try {
+      await api('/admin/api/users/' + b.dataset.deluser, { method: 'DELETE' });
+      renderAccount();
+    } catch (e) { note('nu-out', 'block', e.message); }
+  });
+
+  document.getElementById('signout').onclick = async () => {
+    await fetch('/admin/api/logout', { method: 'POST', credentials: 'same-origin' });
+    state.email = null;
+    showLogin();
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Shell
@@ -1482,6 +1578,7 @@ function showLogin() {
   stopTimer();
   document.getElementById('app').classList.add('hidden');
   document.getElementById('login').classList.remove('hidden');
+  refreshAuthState().then(paintLoginForm);
 }
 
 function showApp() {
@@ -1501,21 +1598,73 @@ function startTimer() {
 }
 function stopTimer() { if (state.timer) { clearInterval(state.timer); state.timer = null; } }
 
+// needsSetup is true when no account exists yet, which turns the login form
+// into a create-the-first-account form. That endpoint closes permanently once
+// one account exists -- an open registration form on a public hostname would
+// hand the dashboard to whoever found it first.
+let needsSetup = false;
+
+async function refreshAuthState() {
+  try {
+    const res = await fetch('/admin/api/auth', { credentials: 'same-origin' });
+    const d = await res.json();
+    needsSetup = !!d.needs_setup;
+    state.email = d.email || null;
+    return d;
+  } catch (_) {
+    return { signed_in: false };
+  }
+}
+
+function paintLoginForm() {
+  document.getElementById('login-title').textContent =
+    needsSetup ? 'Create your admin account' : 'Sign in';
+  document.getElementById('login-hint').textContent = needsSetup
+    ? 'This is the first account on this gateway. Pick an email and a password of at least 10 characters.'
+    : 'Use the email and password for your dashboard account.';
+  document.getElementById('login-submit').textContent =
+    needsSetup ? 'Create account' : 'Sign in';
+  document.getElementById('password2').classList.toggle('hidden', !needsSetup);
+  document.getElementById('password').autocomplete =
+    needsSetup ? 'new-password' : 'current-password';
+}
+
 document.getElementById('login-form').addEventListener('submit', async ev => {
   ev.preventDefault();
   const err = document.getElementById('login-err');
+  const btn = document.getElementById('login-submit');
   err.textContent = '';
+
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  if (needsSetup && password !== document.getElementById('password2').value) {
+    err.textContent = 'The two passwords do not match.';
+    return;
+  }
+
+  btn.disabled = true;
   try {
-    const res = await fetch('/admin/api/login', {
+    const res = await fetch(needsSetup ? '/admin/api/setup' : '/admin/api/login', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: document.getElementById('token').value }),
+      body: JSON.stringify({ email, password }),
     });
-    if (!res.ok) throw new Error('Invalid admin token');
+    if (!res.ok) {
+      let msg = 'Sign-in failed';
+      try { msg = (await res.json()).error.message; } catch (_) {}
+      throw new Error(msg);
+    }
+    const d = await res.json();
+    state.email = d.email || email;
+    needsSetup = false;
+    document.getElementById('password').value = '';
+    document.getElementById('password2').value = '';
     showApp();
   } catch (e) {
     err.textContent = e.message;
+  } finally {
+    btn.disabled = false;
   }
 });
 

@@ -12,10 +12,12 @@
 <div id="login" class="login hidden">
   <form class="login-card" id="login-form">
     <div class="brand"><span class="dot"></span> LLMFast</div>
-    <h1>Admin access</h1>
-    <p class="muted">Enter the admin token from <code>config.yaml</code> or <code>LLMFAST_ADMIN_TOKEN</code>.</p>
-    <input type="password" id="token" placeholder="Admin token" autocomplete="current-password" required>
-    <button type="submit">Sign in</button>
+    <h1 id="login-title">Sign in</h1>
+    <p class="muted" id="login-hint">Use the email and password for your dashboard account.</p>
+    <input type="email" id="email" placeholder="Email" autocomplete="username" required>
+    <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+    <input type="password" id="password2" placeholder="Repeat password" autocomplete="new-password" class="hidden">
+    <button type="submit" id="login-submit">Sign in</button>
     <div class="err" id="login-err"></div>
   </form>
 </div>
@@ -35,6 +37,7 @@
       <button data-view="keys">API Keys</button>
       <button data-view="modeldoc">Model Doc</button>
       <button data-view="guides">Guides</button>
+      <button data-view="account">Account</button>
     </nav>
     <div class="spacer"></div>
     <select id="range" title="Time range">
