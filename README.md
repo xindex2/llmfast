@@ -332,6 +332,7 @@ Four commands are all you need afterwards:
 | `llmfast.sh logs` | follow all three logs (Ctrl-C to stop watching) |
 | `llmfast.sh restart` | after a `git pull && make build` |
 | `llmfast.sh stop` | shut it all down, strays included |
+| `llmfast.sh token` | print the admin token, resolved the way the gateway resolves it |
 
 `status` is the one to reach for. It checks the agent, the gateway, the admin UI
 and your public hostname, and lists the installed models:

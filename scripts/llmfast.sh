@@ -226,6 +226,32 @@ status() {
   host=$(grep -m1 -E '^\s*hostname:' /root/.cloudflared/config.yml 2>/dev/null | awk '{print $2}')
   [ -n "${host:-}" ] && probe "public   $host" "https://$host/v1/models"
 
+  # An admin hostname on the tunnel with nothing in front of it is the most
+  # damaging misconfiguration available here: that page exposes API keys, the
+  # full request history, and the ability to install and stop models. A bearer
+  # token is one guess away from all of it, and it is reachable from anywhere.
+  local admin_host
+  admin_host=$(grep -B1 'service: http://127.0.0.1:8090' /root/.cloudflared/config.yml 2>/dev/null |
+               grep -m1 -E 'hostname:' | awk '{print $2}')
+  if [ -n "${admin_host:-}" ]; then
+    say "Admin exposure"
+    local loc
+    loc=$(curl -s -o /dev/null -w '%{redirect_url}' --max-time 8 "https://$admin_host/" 2>/dev/null)
+    if echo "$loc" | grep -q 'cloudflareaccess.com'; then
+      ok "$admin_host is behind Cloudflare Access"
+    else
+      bad "$admin_host is PUBLIC -- Cloudflare Access is not in front of it"
+      echo "      Anyone who finds this hostname reaches your admin login, and only"
+      echo "      a bearer token stands between them and your API keys, your request"
+      echo "      history, and the ability to stop your models."
+      echo
+      echo "      Fix it now: one-dash.cloudflareaccess.com -> Access -> Applications"
+      echo "      -> Add self-hosted -> $admin_host -> policy: Emails = your address."
+      echo "      Until then, reach the admin UI over SSH instead:"
+      echo "        ssh -L 8090:127.0.0.1:8090 root@<pod> -p <port>   then http://localhost:8090"
+    fi
+  fi
+
   say "Models"
   curl -s --max-time 5 http://127.0.0.1:8080/v1/models 2>/dev/null | python3 -c '
 import json, sys
@@ -290,11 +316,66 @@ stop() {
   [ "$stopped" = 1 ] || echo "nothing was running"
 }
 
+# show_token prints the admin token the gateway is actually using, resolving it
+# exactly the way the gateway does: the value in config.yaml wins, unless it
+# names an environment variable, in which case llmfast.env supplies it.
+show_token() {
+  WORKDIR="$WORKDIR" python3 - <<'PYEOF'
+import os, re, sys
+
+work = os.environ["WORKDIR"]
+
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+def unquote(v):
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        v = v[1:-1]
+    return v
+
+tok = ""
+for line in read(os.path.join(work, "config.yaml")).splitlines():
+    m = re.match(r"\s*admin_token:\s*(.+?)\s*(?:#.*)?$", line)
+    if m:
+        tok = unquote(m.group(1))
+        break
+
+env = {}
+for line in read(os.path.join(work, "llmfast.env")).splitlines():
+    if "=" in line and not line.lstrip().startswith("#"):
+        k, v = line.split("=", 1)
+        env[k.strip()] = unquote(v)
+
+# A leading $ means "read this from the environment", which is why a token that
+# genuinely begins with $ cannot be written straight into config.yaml.
+if tok.startswith("$"):
+    tok = env.get(tok.lstrip("${").rstrip("}"), "")
+elif not tok:
+    tok = env.get("LLMFAST_ADMIN_TOKEN", "")
+
+if not tok:
+    print("  no admin token found in config.yaml or llmfast.env")
+    sys.exit(1)
+
+print()
+print("  " + tok)
+print()
+print("  Paste exactly that into the admin login box.")
+print("  No $ in front of it, no quotes around it.")
+PYEOF
+}
+
 case "${1:-status}" in
   start)   start ;;
+  token)   say "Admin token"; show_token ;;
   stop)    stop ;;
   restart) stop; sleep 2; start ;;
   status)  status ;;
   logs)    tail -n 40 -F "$LOGDIR"/agent.log "$LOGDIR"/gateway.log "$LOGDIR"/tunnel.log 2>/dev/null ;;
-  *)       echo "usage: $0 {start|stop|restart|status|logs}"; exit 2 ;;
+  *)       echo "usage: $0 {start|stop|restart|status|logs|token}"; exit 2 ;;
 esac
