@@ -1,0 +1,16 @@
+# Build output
+dist/
+
+# Local state: databases, logs, installed model files
+*.db
+*.db-wal
+*.db-shm
+config/models.d/*.yaml
+llmfast-dev.db*
+
+# Secrets — never commit these
+*.env
+.env
+/etc/llmfast/
+
+.DS_Store

@@ -1,0 +1,101 @@
+# Local development config: points at cmd/mockvllm instead of a GPU node.
+#   make dev
+#
+# To try the one-click install flow without a GPU, run a node agent with
+# cmd/mockvllm standing in for a real engine:
+#   go build -o /tmp/bin/vllm ./cmd/mockvllm
+#   PATH=/tmp/bin:$PATH LLMFAST_AGENT_TOKEN=dev-agent-token make agent
+# then uncomment the `nodes:` block below and restart the gateway.
+
+provider:
+  slug: llmfast
+  display_name: LLMFast
+  public_url: http://localhost:8080
+
+server:
+  listen: ":8080"
+  admin_listen: "127.0.0.1:8081"
+  admin_token: "dev-admin-token"
+  db_path: "llmfast-dev.db"
+  model_dir: "models.d"
+  keepalive_interval: 10s
+  raw_retention_days: 30
+
+# nodes:
+#   - name: local
+#     url: http://127.0.0.1:9900
+#     token: dev-agent-token
+#     max_concurrency: 16
+
+backends:
+  - name: mock-a
+    base_url: http://127.0.0.1:8000/v1
+    max_concurrency: 32
+    weight: 1
+  - name: mock-b
+    base_url: http://127.0.0.1:8000/v1
+    max_concurrency: 32
+    weight: 1
+
+models:
+  - id: qwen/qwen3-32b
+    name: "Qwen: Qwen3 32B"
+    upstream_model: Qwen/Qwen3-32B
+    backends: [mock-a, mock-b]
+    hugging_face_id: Qwen/Qwen3-32B
+    created: "2025-04-29"
+    quantization: fp8
+    tokenizer: Qwen
+    description: "Qwen3 32B served on FP8 with prefix caching."
+    context_length: 131072
+    max_output_tokens: 32768
+    pricing:
+      prompt: "0.00000009"
+      completion: "0.00000028"
+      cached_prompt: "0.00000002"
+    capacity:
+      prompt_tpm: 2000000
+      completion_tpm: 600000
+      requests_per_minute: 3000
+      concurrency: 64
+    features:
+      tools: true
+      structured_outputs: true
+      response_format: true
+      seed: true
+      logprobs: true
+    datacenters:
+      - country_code: DE
+        region: eu-central-1
+    compliance:
+      zdr: true
+      hipaa: false
+
+  - id: deepseek/deepseek-v3
+    name: "DeepSeek: DeepSeek V3"
+    upstream_model: deepseek-ai/DeepSeek-V3
+    backends: [mock-a]
+    hugging_face_id: deepseek-ai/DeepSeek-V3
+    created: "2025-03-24"
+    quantization: fp8
+    tokenizer: DeepSeek
+    description: "DeepSeek V3 MoE, FP8, tensor parallel across 8 GPUs."
+    context_length: 163840
+    max_output_tokens: 32768
+    pricing:
+      prompt: "0.00000022"
+      completion: "0.00000080"
+      cached_prompt: "0.00000004"
+    capacity:
+      prompt_tpm: 1500000
+      completion_tpm: 400000
+      requests_per_minute: 1500
+    features:
+      tools: true
+      structured_outputs: true
+      reasoning: true
+    datacenters:
+      - country_code: DE
+        region: eu-central-1
+    compliance:
+      zdr: true

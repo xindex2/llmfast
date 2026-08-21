@@ -1,0 +1,210 @@
+# LLMFast gateway configuration.
+#
+# This file is the single source of truth for routing, pricing and the
+# /v1/models document OpenRouter reads. Send SIGHUP to reload models and
+# pricing without dropping in-flight streams; changing `backends` needs a
+# restart, because connection pools and admission counters are rebuilt.
+#
+# Pricing is USD per single token as a decimal string. Divide the familiar
+# per-million figure by 1,000,000:  $0.09 / M  ->  "0.00000009"
+
+provider:
+  slug: llmfast
+  display_name: LLMFast
+  public_url: https://api.llmfa.st
+
+server:
+  listen: ":8080"
+  # Keep the admin listener private. Bind it to localhost and reach it over an
+  # SSH tunnel, or to a VPN interface -- it exposes API keys and full request
+  # history.
+  admin_listen: "127.0.0.1:8081"
+  admin_token: "$LLMFAST_ADMIN_TOKEN"
+  db_path: "/var/lib/llmfast/llmfast.db"
+  # Models added through the admin UI are written here, one file each, so this
+  # file keeps its structure and comments. Delete a file to remove that model.
+  model_dir: "models.d"
+  # Well under OpenRouter's fetch timeout, so a long prefill or a reasoning
+  # model's thinking phase is never mistaken for a hung connection.
+  keepalive_interval: 10s
+  raw_retention_days: 30
+
+# Nodes run llmfast-agent and can install models on request from the admin UI.
+# Engines they report as ready become routable automatically -- no restart, and
+# no entry needed under `backends`. See docs/nodes.md.
+nodes:
+  - name: gpu-a
+    url: http://10.0.0.11:9900
+    token: $LLMFAST_AGENT_TOKEN
+    # Never exceed the engine's own --max-num-seqs: this is where the gateway
+    # sheds load with a 429 rather than queueing.
+    max_concurrency: 96
+    weight: 2
+
+# Static backends are for engines you start and manage yourself. A model can
+# route to backends, to nodes, or to both.
+backends:
+  # One entry per vLLM process. Several entries may point at the same host if
+  # you run more than one server on it.
+  #
+  # max_concurrency must be at or below the replica's --max-num-seqs: this
+  # gateway sheds load with a 429 at this number, which is what keeps queueing
+  # out of the throughput OpenRouter measures.
+  - name: gpu-a
+    base_url: http://10.0.0.11:8000/v1
+    max_concurrency: 96
+    weight: 2
+    timeout: 10m
+
+  - name: gpu-b
+    base_url: http://10.0.0.12:8000/v1
+    max_concurrency: 96
+    weight: 2
+    timeout: 10m
+
+  - name: gpu-c
+    base_url: http://10.0.0.13:8000/v1
+    max_concurrency: 48
+    weight: 1
+    timeout: 15m
+
+models:
+  # ---------------------------------------------------------------------------
+  # Dense mid-size models. Best margin per GPU-hour and the bulk of real traffic.
+  # ---------------------------------------------------------------------------
+  - id: qwen/qwen3-32b
+    name: "Qwen: Qwen3 32B"
+    upstream_model: Qwen/Qwen3-32B
+    backends: [gpu-a, gpu-b]
+    hugging_face_id: Qwen/Qwen3-32B
+    created: "2025-04-29"
+    quantization: fp8
+    tokenizer: Qwen
+    description: >-
+      Qwen3 32B served at FP8 with prefix caching and chunked prefill.
+      Tuned for low time-to-first-token on chat and tool-calling workloads.
+    context_length: 131072
+    max_output_tokens: 32768
+    pricing:
+      prompt: "0.00000009"        # $0.09 / M
+      completion: "0.00000028"    # $0.28 / M
+      cached_prompt: "0.00000002" # $0.02 / M
+    capacity:
+      prompt_tpm: 3000000
+      cached_prompt_tpm: 6000000
+      completion_tpm: 800000
+      requests_per_minute: 4000
+      concurrency: 192
+    features:
+      tools: true
+      structured_outputs: true
+      response_format: true
+      seed: true
+      logprobs: true
+    datacenters:
+      - country_code: DE
+        region: eu-central-1
+    compliance:
+      zdr: true
+      hipaa: false
+
+  - id: zai/glm-4.6
+    name: "Z.AI: GLM 4.6"
+    upstream_model: zai-org/GLM-4.6
+    backends: [gpu-b]
+    hugging_face_id: zai-org/GLM-4.6
+    created: "2025-09-30"
+    quantization: fp8
+    tokenizer: GLM
+    description: >-
+      GLM-4.6 at FP8 with prefix caching. Strong agentic and tool-calling
+      performance at a fraction of frontier pricing.
+    context_length: 200000
+    max_output_tokens: 65536
+    pricing:
+      prompt: "0.00000038"
+      completion: "0.00000150"
+      cached_prompt: "0.00000006"
+    capacity:
+      prompt_tpm: 1500000
+      completion_tpm: 400000
+      requests_per_minute: 2000
+      concurrency: 96
+    features:
+      tools: true
+      structured_outputs: true
+      reasoning: true
+      response_format: true
+    datacenters:
+      - country_code: DE
+        region: eu-central-1
+    compliance:
+      zdr: true
+
+  # ---------------------------------------------------------------------------
+  # Large MoE models. Each replica needs 8x H200; keep concurrency honest.
+  # ---------------------------------------------------------------------------
+  - id: deepseek/deepseek-v3
+    name: "DeepSeek: DeepSeek V3"
+    upstream_model: deepseek-ai/DeepSeek-V3
+    backends: [gpu-c]
+    hugging_face_id: deepseek-ai/DeepSeek-V3
+    created: "2025-03-24"
+    quantization: fp8
+    tokenizer: DeepSeek
+    description: >-
+      DeepSeek V3 (671B MoE, 37B active) at FP8 across 8 GPUs with
+      RadixAttention-style prefix reuse.
+    context_length: 163840
+    max_output_tokens: 32768
+    pricing:
+      prompt: "0.00000022"
+      completion: "0.00000080"
+      cached_prompt: "0.00000004"
+    capacity:
+      prompt_tpm: 1200000
+      completion_tpm: 300000
+      requests_per_minute: 1200
+      concurrency: 64
+    features:
+      tools: true
+      structured_outputs: true
+      reasoning: true
+    datacenters:
+      - country_code: DE
+        region: eu-central-1
+    compliance:
+      zdr: true
+
+  - id: moonshot/kimi-k2
+    name: "MoonshotAI: Kimi K2"
+    upstream_model: moonshotai/Kimi-K2-Instruct
+    backends: [gpu-c]
+    hugging_face_id: moonshotai/Kimi-K2-Instruct
+    created: "2025-07-11"
+    quantization: fp8
+    tokenizer: Kimi
+    description: >-
+      Kimi K2 (1T MoE, 32B active) at FP8. Agentic and long-context workloads.
+    context_length: 131072
+    max_output_tokens: 32768
+    pricing:
+      prompt: "0.00000048"
+      completion: "0.00000230"
+      cached_prompt: "0.00000008"
+    capacity:
+      prompt_tpm: 800000
+      completion_tpm: 200000
+      requests_per_minute: 800
+      concurrency: 48
+    features:
+      tools: true
+      structured_outputs: true
+    datacenters:
+      - country_code: DE
+        region: eu-central-1
+    compliance:
+      zdr: true
+    # Staged but hidden at OpenRouter until the replica is warm and benchmarked.
+    # Flip to true (or remove) to go live.
+    is_ready: false
