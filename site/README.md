@@ -78,6 +78,19 @@ The one thing that can still drift is **the claims in "Why it's quick"** —
 prefix caching, 429 instead of queueing, unbuffered SSE. Those describe what the
 gateway actually does today. If you change that behaviour, change the copy.
 
-The model card marks are drawn by us rather than taken from the labs' logos.
-Naming a model you serve is ordinary descriptive use; reproducing someone's
-trademark on your own marketing implies an endorsement you do not have.
+The model card icons in `img/` are each lab's own mark, fetched once and served
+from this origin. They are deliberately not hotlinked: a request to four third
+parties on every page load would leak your visitors' IP addresses to them and
+break the page the first time one of them moved a file.
+
+| File | Source |
+|---|---|
+| `qwen.png` | the icon declared by qwen.ai |
+| `deepseek.png` | `deepseek.com/favicon.ico`, converted and resized |
+| `glm.svg` | the logo declared by z.ai |
+| `kimi.png` | `kimi.com/favicon.ico`, converted and resized |
+
+Using a maker's mark to identify the model of theirs you serve is descriptive
+use and is what every routing platform does. It does not imply they endorse you,
+and you should not restyle the marks or use them anywhere that suggests a
+partnership. If a lab asks you to stop, stop.

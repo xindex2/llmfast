@@ -245,17 +245,13 @@
     </p>
 
     <div class="modelgrid">
-      <!-- Each card carries a hand-drawn mark rather than the maker's logo:
-           the marks are ours, so nothing here implies endorsement by or
-           affiliation with the labs whose models we serve. -->
+      <!-- The icons are each lab's own, served from this origin rather than
+           hotlinked: a request to four third parties on every page load would
+           leak visitor IPs and break the page whenever one of them moved a
+           file. Using a maker's mark to identify the model of theirs we serve
+           is descriptive; it does not imply they endorse us. -->
       <a class="modelcard" href="https://api.llmfa.st/v1/models">
-        <span class="mark">
-          <svg viewBox="0 0 40 40" aria-hidden="true">
-            <path d="M20 5 C 29 6, 35 13, 35 21 C 35 30, 28 35, 20 35
-                     C 11 35, 5 29, 5 21 C 5 12, 12 5, 20 5 Z" class="sketch-stroke"/>
-            <path d="M13 22 C 17 15, 23 15, 27 22 M13 22 L 20 30 L 27 22" class="sketch-stroke thin"/>
-          </svg>
-        </span>
+        <img class="mark" src="/img/qwen.png" alt="Qwen" width="40" height="40" loading="lazy">
         <span class="body">
           <strong>Qwen3</strong>
           <em>Alibaba</em>
@@ -264,14 +260,7 @@
       </a>
 
       <a class="modelcard" href="https://api.llmfa.st/v1/models">
-        <span class="mark">
-          <svg viewBox="0 0 40 40" aria-hidden="true">
-            <path d="M7 12 C 16 9, 26 13, 34 10 C 33 20, 34 28, 33 32
-                     C 24 34, 14 31, 6 33 C 8 25, 6 19, 7 12 Z" class="sketch-stroke"/>
-            <path d="M13 20 C 19 18, 26 21, 30 19" class="sketch-stroke thin"/>
-            <path d="M13 26 C 18 24, 24 27, 28 25" class="sketch-stroke thin"/>
-          </svg>
-        </span>
+        <img class="mark" src="/img/deepseek.png" alt="DeepSeek" width="40" height="40" loading="lazy">
         <span class="body">
           <strong>DeepSeek</strong>
           <em>DeepSeek AI</em>
@@ -280,13 +269,7 @@
       </a>
 
       <a class="modelcard" href="https://api.llmfa.st/v1/models">
-        <span class="mark">
-          <svg viewBox="0 0 40 40" aria-hidden="true">
-            <path d="M20 6 L 33 13 C 33 22, 28 31, 20 35 C 12 31, 7 22, 7 13 Z"
-                  class="sketch-stroke"/>
-            <path d="M14 19 L 19 25 L 27 15" class="sketch-stroke thin"/>
-          </svg>
-        </span>
+        <img class="mark" src="/img/glm.svg" alt="GLM" width="40" height="40" loading="lazy">
         <span class="body">
           <strong>GLM</strong>
           <em>Z.ai</em>
@@ -295,14 +278,7 @@
       </a>
 
       <a class="modelcard" href="https://api.llmfa.st/v1/models">
-        <span class="mark">
-          <svg viewBox="0 0 40 40" aria-hidden="true">
-            <path d="M28 7 C 20 8, 13 15, 13 23 C 13 30, 19 34, 26 34
-                     C 18 31, 15 26, 16 20 C 17 13, 22 9, 28 7 Z" class="sketch-stroke"/>
-            <path d="M30 14 L 32 18 L 36 19 L 33 22 L 34 26 L 30 24 L 26 26 L 27 22 L 24 19 L 28 18 Z"
-                  class="sketch-stroke thin"/>
-          </svg>
-        </span>
+        <img class="mark" src="/img/kimi.png" alt="Kimi" width="40" height="40" loading="lazy">
         <span class="body">
           <strong>Kimi</strong>
           <em>Moonshot AI</em>

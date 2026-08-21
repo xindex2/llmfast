@@ -275,8 +275,13 @@ footer.site a { color: var(--ink-soft); }
   transition: transform .09s ease, box-shadow .09s ease;
 }
 .modelcard:hover { transform: translate(-1px,-1px); box-shadow: 5px 5px 0 rgba(28,27,25,.16); }
-.modelcard .mark { flex: none; width: 40px; height: 40px; }
-.modelcard .mark svg { width: 100%; height: 100%; display: block; }
+/* Each icon is the maker's own artwork. Some already carry a dark rounded
+   background of their own, so adding another one behind them would double-frame
+   them; a fixed box with object-fit is enough to give them equal visual weight. */
+.modelcard .mark {
+  flex: none; width: 40px; height: 40px;
+  object-fit: contain;
+}
 .modelcard .body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .modelcard strong { font-size: 16px; letter-spacing: -.01em; }
 .modelcard em { font-style: normal; font-size: 12.5px; color: var(--muted); }
