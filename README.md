@@ -420,7 +420,15 @@ To send a new build later, run the same command again on your computer:
 ```
 
 Then restart the three processes on the pod. If you used a deploy key instead:
-`cd /workspace/llmfast && git pull && make build`.
+
+```bash
+# 🖥️ ON THE POD
+cd /workspace/llmfast && git pull && make build
+```
+
+If that says `go: not found`, the shell predates the Go install. Either open a
+new tab or run `export PATH=$PATH:/usr/local/go/bin` first — though the Makefile
+now looks in `/usr/local/go/bin` itself, so it should not come up.
 
 Your config and installed models live in `/workspace`, outside the repo, so a
 `git pull` never touches them.

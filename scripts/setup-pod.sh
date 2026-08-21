@@ -60,7 +60,10 @@ elif [ -f "$REPO/go.mod" ]; then
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
   fi
   export PATH=$PATH:/usr/local/go/bin
-  grep -q '/usr/local/go/bin' ~/.bashrc 2>/dev/null || echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+  # /etc/profile.d rather than ~/.bashrc: a web terminal may open a shell that
+  # never reads ~/.bashrc, and any tab opened before this ran will not have it.
+  echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
+  chmod +x /etc/profile.d/go.sh
   go version
   ( cd "$REPO" && make build )
 elif git clone -q https://github.com/xindex2/llmfast.git "$REPO" 2>/dev/null; then
