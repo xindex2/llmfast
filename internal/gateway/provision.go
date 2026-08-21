@@ -16,14 +16,21 @@ import (
 // InspectResult is everything the admin UI needs to offer a one-click install:
 // what the model is, whether it fits on each node, and what to charge for it.
 type InspectResult struct {
-	Info             *modelspec.Info           `json:"info"`
-	SuggestedID      string                    `json:"suggested_id"`
-	SuggestedName    string                    `json:"suggested_name"`
-	Pricing          map[string]string         `json:"pricing"`
-	Plans            []NodePlan                `json:"plans"`
-	GGUFCandidates   []modelspec.GGUFCandidate `json:"gguf_candidates,omitempty"`
-	GGUFError        string                    `json:"gguf_error,omitempty"`
-	AlreadyInstalled bool                      `json:"already_installed"`
+	Info           *modelspec.Info           `json:"info"`
+	SuggestedID    string                    `json:"suggested_id"`
+	SuggestedName  string                    `json:"suggested_name"`
+	Pricing        map[string]string         `json:"pricing"`
+	Plans          []NodePlan                `json:"plans"`
+	GGUFCandidates []modelspec.GGUFCandidate `json:"gguf_candidates,omitempty"`
+	GGUFError      string                    `json:"gguf_error,omitempty"`
+
+	// QuantCandidates is populated when the model does not fit at its native
+	// precision on some node. Quantization cannot be applied at launch, so the
+	// only way forward is a different repository, and the operator should not
+	// have to go and find one.
+	QuantCandidates  []modelspec.QuantCandidate `json:"quant_candidates,omitempty"`
+	QuantError       string                     `json:"quant_error,omitempty"`
+	AlreadyInstalled bool                       `json:"already_installed"`
 }
 
 // NodePlan pairs a node with the plan for running this model on it.
@@ -75,7 +82,8 @@ func (s *Server) adminInspect(w http.ResponseWriter, r *http.Request) {
 
 	// Plan against every configured node so the operator can see at a glance
 	// where this model can actually run.
-	needGGUF := false
+	needGGUF, needQuant := false, false
+	runnable := map[string]bool{}
 	for _, st := range s.nodes.Statuses() {
 		np := NodePlan{Node: st.Name, Reachable: st.Reachable}
 		if !st.Reachable || st.Info == nil {
@@ -92,6 +100,12 @@ func (s *Server) adminInspect(w http.ResponseWriter, r *http.Request) {
 		np.Plan = modelspec.PlanFor(info, &hw, body.Context)
 		if np.Plan.Engine == "llamacpp" {
 			needGGUF = true
+		}
+		if np.Plan.NeedsQuantized {
+			needQuant = true
+			for _, q := range np.Plan.RunnableQuants {
+				runnable[q] = true
+			}
 		}
 		// A plan is useless if the engine it needs is not installed there.
 		if !contains(st.Info.EnginesAvailable, np.Plan.Engine) {
@@ -110,6 +124,26 @@ func (s *Server) adminInspect(w http.ResponseWriter, r *http.Request) {
 			res.GGUFError = err.Error()
 		} else {
 			res.GGUFCandidates = cands
+		}
+	}
+
+	// Same idea for GPU nodes where the model overflows VRAM at full precision.
+	if needQuant {
+		if cands, err := s.hf.ResolveQuantized(ctx, info.ID); err != nil {
+			res.QuantError = err.Error()
+		} else {
+			// Only formats some node can actually execute. An NVFP4 repository
+			// is the top search result for many models and no Ampere card can
+			// run one, so offering it would just cost the operator a round trip.
+			for _, c := range cands {
+				if runnable[c.Quant] {
+					res.QuantCandidates = append(res.QuantCandidates, c)
+				}
+			}
+			if len(res.QuantCandidates) == 0 {
+				res.QuantError = "found pre-quantized publications of this model, but none in a " +
+					"format your GPUs can run"
+			}
 		}
 	}
 

@@ -96,6 +96,17 @@ type Plan struct {
 	// lower bound because batching and kernel quality dominate.
 	EstTokensPerSec float64 `json:"est_tokens_per_sec"`
 
+	// QuantFromCheckpoint records that Quantization was read from the
+	// checkpoint rather than chosen. It is never chosen for weights.
+	QuantFromCheckpoint bool `json:"quant_from_checkpoint"`
+	// NeedsQuantized reports that the model does not fit at full precision but
+	// would fit if a pre-quantized publication of it were used instead.
+	NeedsQuantized bool `json:"needs_quantized"`
+	// RunnableQuants lists the checkpoint formats this node's GPUs can execute.
+	// Offering an operator an NVFP4 repository for an Ampere card would only
+	// send them round the loop again to be told it does not work.
+	RunnableQuants []string `json:"runnable_quants,omitempty"`
+
 	Fits     bool     `json:"fits"`
 	Warnings []string `json:"warnings"`
 	Blockers []string `json:"blockers"`
@@ -170,47 +181,87 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 	}
 	tp := largestValidTP(nGPU, kvHeadsForTP)
 	a := nodeArch(node)
-	ladder := precisionLadder(a)
+	p.TensorParallel = tp
+
+	// The checkpoint decides the format. If it was published quantized, that is
+	// what runs -- there is no choice to make and no ladder to walk. If it was
+	// published at full precision, the only option is full precision, because
+	// nothing at runtime can turn bf16 weights into 4-bit ones.
+	quant := nativePrecision(a)
+	if info.PublishedQuant != "" {
+		quant = canonicalQuant(info.PublishedQuant)
+		p.QuantFromCheckpoint = true
+	}
+	if ok, why := canRunQuant(a, quant); !ok {
+		p.Quantization = quant
+		p.Blockers = append(p.Blockers, fmt.Sprintf(
+			"this checkpoint is published in %s and %s: %s", quant, a.name, why))
+		p.MaxNumSeqs, p.MaxModelLen, p.KVBudgetBytes, p.DiskBytes = 0, 0, 0, 0
+		p.Fits = false
+		return p
+	}
 
 	// Only the GPUs the model is actually sharded across contribute memory.
 	// Summing the whole node regardless of TP was wrong in the worst possible
 	// direction: it reported a 283 GiB model as fitting on an 8-GPU node at
 	// TP=1, where it would in fact have to live inside one 141 GiB card.
 	usable := int64(float64(perGPUVRAM(node)*int64(tp)) * defaultGPUMemUtil)
-	quant := ""
-	for _, candidate := range ladder {
-		weights := int64(float64(info.Params) * quantBytes(candidate))
-		if usable-weights > 0 {
-			quant = candidate
-			p.WeightBytes = weights
-			p.KVBudgetBytes = usable - weights
-			break
-		}
-	}
-	p.TensorParallel = tp
-	if quant == "" {
-		smallest := ladder[len(ladder)-1]
-		p.Quantization = smallest
-		p.WeightBytes = int64(float64(info.Params) * quantBytes(smallest))
+	p.Quantization = quant
+	p.WeightBytes = int64(float64(info.Params) * quantBytes(quant))
+	p.KVBudgetBytes = usable - p.WeightBytes
+
+	if p.KVBudgetBytes <= 0 {
 		reason := fmt.Sprintf(
-			"weights need %s even at %s, but only %s is addressable (%d of %d GPU(s) at TP=%d)",
-			humanBytes(p.WeightBytes), smallest,
+			"weights need %s at %s, but only %s is addressable (%d of %d GPU(s) at TP=%d)",
+			humanBytes(p.WeightBytes), quant,
 			humanBytes(perGPUVRAM(node)*int64(tp)), tp, nGPU, tp)
 		if tp < nGPU {
 			reason += fmt.Sprintf("; tensor parallelism is capped at %d because the model has %d KV head(s)",
 				tp, info.NumKVHeads)
 		}
-		if !a.int4 {
-			reason += fmt.Sprintf("; %s has no 4-bit kernels, so there is no smaller option", a.name)
-		}
 		p.Blockers = append(p.Blockers, reason)
+
+		// A full-precision checkpoint that does not fit is not the end of the
+		// road: the same weights are usually republished smaller. Say so, and
+		// let the caller go and find them, rather than emitting a plan with
+		// "--quantization awq" against a bf16 repository -- which does not
+		// quantize anything and dies at launch with "Cannot find the config
+		// file for awq".
+		// Only formats smaller than the current one, that this hardware can
+		// run, and that would actually leave room for a KV cache.
+		var smaller []string
+		for _, f := range []string{"fp8", "awq"} {
+			if quantBytes(f) >= quantBytes(quant) {
+				continue
+			}
+			if ok, _ := canRunQuant(a, f); !ok {
+				continue
+			}
+			w := int64(float64(info.Params) * quantBytes(f))
+			if usable-w <= 0 {
+				continue
+			}
+			label := map[string]string{"fp8": "fp8", "awq": "AWQ or GPTQ 4-bit"}[f]
+			smaller = append(smaller, fmt.Sprintf("%s (~%s)", label, humanBytes(w)))
+		}
+		if len(smaller) > 0 {
+			p.NeedsQuantized = true
+			for _, f := range []string{"fp8", "awq", "gptq", "nvfp4"} {
+				if ok, _ := canRunQuant(a, f); ok {
+					p.RunnableQuants = append(p.RunnableQuants, f)
+				}
+			}
+			p.Blockers = append(p.Blockers, fmt.Sprintf(
+				"install a pre-quantized publication of this model instead -- %s would fit. "+
+					"Quantization lives in the checkpoint, so this needs a different "+
+					"HuggingFace repository, not a different flag", strings.Join(smaller, " or ")))
+		}
 		// Nothing can run, so the capacity fields would be meaningless. Leaving
 		// the default 256 in place reads as "256 concurrent" next to a blocker.
 		p.MaxNumSeqs, p.MaxModelLen, p.KVBudgetBytes, p.DiskBytes = 0, 0, 0, 0
 		p.Fits = false
 		return p
 	}
-	p.Quantization = quant
 
 	// Store the KV cache at fp8 where the hardware allows. It halves the
 	// per-token cost, and KV cache -- not weights -- is what limits concurrency
@@ -242,7 +293,15 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 		// implementation detail, not something an operator needs to read.
 		const minConcurrency = 8
 		original := p.MaxModelLen
-		for p.MaxModelLen > 8192 && totalKVTokens/int64(p.MaxModelLen) < minConcurrency {
+		// Trimming only applies to the default. When the operator names a
+		// context they have made a deliberate trade -- a coding agent that gets
+		// truncated at 16k is worse than one served with less concurrency -- and
+		// silently halving it would defeat the setting they came here to set.
+		floor := 8192
+		if wantContext > 0 {
+			floor = p.MaxModelLen
+		}
+		for p.MaxModelLen > floor && totalKVTokens/int64(p.MaxModelLen) < minConcurrency {
 			p.MaxModelLen /= 2
 		}
 		if p.MaxModelLen != original {
@@ -250,6 +309,14 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 				"context reduced from %d to %d so at least %d requests fit concurrently; "+
 					"more VRAM would let you advertise the full window",
 				original, p.MaxModelLen, minConcurrency))
+		} else if seqs := totalKVTokens / int64(p.MaxModelLen); wantContext > 0 && seqs < minConcurrency {
+			p.Warnings = append(p.Warnings, fmt.Sprintf(
+				"a %d-token context leaves room for only %d concurrent request(s): the KV cache "+
+					"holds %d tokens in total and every in-flight request reserves the full "+
+					"window. Lowering the context to %d would roughly double that. Judge it "+
+					"against your traffic -- long prompts truncated at a short context lose the "+
+					"request outright, whereas low concurrency only queues it",
+				p.MaxModelLen, seqs, totalKVTokens, p.MaxModelLen/2))
 		}
 		if seqs := int(totalKVTokens / int64(p.MaxModelLen)); seqs < p.MaxNumSeqs {
 			p.MaxNumSeqs = maxInt(1, seqs)
@@ -260,12 +327,18 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 		p.Warnings = append(p.Warnings,
 			"very low concurrency; this GPU is undersized for this model")
 	}
-	if quant == "awq" {
-		msg := "4-bit quantization needed to fit; expect some quality loss and find a prequantized AWQ/GPTQ repo"
-		if !a.fp8 {
-			msg += fmt.Sprintf(". %s has no hardware FP8, so 4-bit is the only step below full precision", a.name)
-		}
-		p.Warnings = append(p.Warnings, msg)
+	if quant == "awq" || quant == "gptq" || quant == "nvfp4" {
+		p.Warnings = append(p.Warnings,
+			"this is a 4-bit checkpoint, which trades some output quality for the memory "+
+				"it frees; compare it against the full-precision model on your own prompts "+
+				"before publishing")
+	}
+	if quant == "fp8" && !a.fp8 {
+		p.Warnings = append(p.Warnings, fmt.Sprintf(
+			"%s has no fp8 arithmetic, so the Marlin kernel unpacks these weights to fp16 "+
+				"after loading them. Both wins that matter here survive that: the weights take "+
+				"half the VRAM, which is what makes this model fit, and decoding reads half as "+
+				"many bytes per token. Only the fp8 tensor-core speed-up is missing", a.name))
 	}
 	if p.KVCacheDType == "fp8" {
 		p.Warnings = append(p.Warnings,
@@ -355,19 +428,21 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 				"mid-range %.0f GB/s; check the card's specification before relying on it",
 			node.GPUs[0].Name, bw))
 	}
-	// Where a smaller weight format would be substantially faster, say so. The
-	// ladder picks the highest quality that fits, which is the right default for
-	// a user of the model -- but a provider is scored on throughput, and reading
-	// a third as many bytes per token is a large enough win to be a deliberate
-	// choice rather than an accident.
-	if idx := indexOf(ladder, quant); idx >= 0 && idx+1 < len(ladder) {
-		next := ladder[idx+1]
+	// Where a smaller weight format would be substantially faster, say so.
+	// Decoding is memory-bandwidth bound: every token reads the whole weight
+	// set, so halving the bytes very nearly doubles the rate. A provider is
+	// scored on throughput, so this is worth being deliberate about rather than
+	// defaulting into. It is phrased as a different checkpoint because that is
+	// what it is -- there is no flag that does this.
+	if next := smallerFormat(a, quant); next != "" {
 		if ratio := quantBytes(quant) / quantBytes(next); ratio >= 1.5 {
 			p.Warnings = append(p.Warnings, fmt.Sprintf(
-				"%s weights read %.1fx more per token than %s would: dropping to %s would raise "+
-					"single-stream throughput to roughly %.0f tok/s and free VRAM for more "+
-					"concurrency, at some quality cost. Worth measuring both",
-				quant, ratio, next, next, p.EstTokensPerSec*ratio))
+				"%s weights read %.1fx more per token than %s would. Installing a pre-quantized "+
+					"%s publication of this model instead would raise single-stream throughput "+
+					"to roughly %.0f tok/s and free %s of VRAM for more concurrency, at some "+
+					"quality cost. Worth measuring both",
+				quant, ratio, next, strings.ToUpper(next), p.EstTokensPerSec*ratio,
+				humanBytes(p.WeightBytes-int64(float64(info.Params)*quantBytes(next)))))
 		}
 	}
 	if node.gpuShare() < 1 {
@@ -478,28 +553,16 @@ func planCPU(info *Info, node *Node, wantContext int) *Plan {
 // downloads a separate prequantized repository, which is far smaller — using
 // the bf16 figure there would overstate the disk requirement threefold and
 // could block a plan that comfortably fits.
+// downloadBytes is what has to come over the wire and sit on disk.
+//
+// This is simply the size of the checkpoint in the format it is published in,
+// because that is now the only format the plan can name. It used to carry an
+// exception for fp8 on the theory that "vLLM quantizes the bf16 checkpoint at
+// load time" -- it does not, and that belief is what produced plans that could
+// not launch.
 func downloadBytes(info *Info, quant string) int64 {
 	const tokenizerAndConfigOverhead = 2 << 30
-	var perParam float64
-	// A checkpoint published already quantized downloads at that size. Assuming
-	// bf16 would double the reported disk requirement for models like
-	// DeepSeek-V4, which ships in fp8.
-	if info.PublishedQuant != "" && (quant == "fp8" || quant == "bf16" || quant == "fp16") {
-		return int64(float64(info.Params)*quantBytes(info.PublishedQuant)) + tokenizerAndConfigOverhead
-	}
-	switch strings.ToLower(quant) {
-	case "awq", "gptq", "int4", "nvfp4", "fp4":
-		perParam = bytesINT4
-	case "q4_k_m":
-		perParam = bytesQ4KM
-	case "q8_0":
-		perParam = bytesQ8_0
-	default:
-		// fp8 included: vLLM quantizes the bf16 checkpoint at load time, so the
-		// download is still full size.
-		perParam = bytesBF16
-	}
-	return int64(float64(info.Params)*perParam) + tokenizerAndConfigOverhead
+	return int64(float64(info.Params)*quantBytes(quant)) + tokenizerAndConfigOverhead
 }
 
 // chooseContext picks a starting context length.
@@ -543,8 +606,18 @@ type arch struct {
 	// which matters because most modern checkpoints are published in bf16 and
 	// can overflow when narrowed to fp16.
 	bf16 bool
-	// fp8 requires Ada, Hopper or Blackwell.
+	// fp8 requires Ada, Hopper or Blackwell. This is fp8 *arithmetic*: the
+	// tensor cores multiply in fp8 natively.
 	fp8 bool
+	// fp8Weights marks hardware that can load an fp8 checkpoint even without
+	// fp8 arithmetic. Ampere cannot multiply in fp8, but vLLM's Marlin kernels
+	// unpack fp8 weights to fp16 as they stream them into the compute units,
+	// so the memory saving is real and only the speed-up is lost. This matters
+	// enormously on a 48GB A40, where it is the difference between a 27B model
+	// fitting and not.
+	fp8Weights bool
+	// nvfp4 is Blackwell-only: the 4-bit float format with hardware support.
+	nvfp4 bool
 	// int4 covers AWQ and GPTQ, whose kernels need Turing (SM75) or newer.
 	// There is therefore no 4-bit escape hatch on Volta at all.
 	int4 bool
@@ -582,20 +655,25 @@ func archOf(name string) arch {
 		return arch{name: "Turing", int4: true}
 	}
 	if gpuHasFP8(name) {
-		return arch{name: "Ada or newer", bf16: true, fp8: true, int4: true,
-			flashAttention2: true, fp8KVCache: true}
+		a := arch{name: "Ada or newer", bf16: true, fp8: true, fp8Weights: true,
+			int4: true, flashAttention2: true, fp8KVCache: true}
+		if isBlackwell(name) {
+			a.name, a.nvfp4 = "Blackwell", true
+		}
+		return a
 	}
 	// Everything else we recognise as a datacenter or workstation part is
 	// treated as Ampere: bf16 and 4-bit, no hardware fp8 for weights, but the
 	// fp8 KV cache still works because that is storage, not arithmetic.
-	return arch{name: "Ampere", bf16: true, int4: true,
+	return arch{name: "Ampere", bf16: true, fp8Weights: true, int4: true,
 		flashAttention2: true, fp8KVCache: true}
 }
 
 // nodeArch returns the least capable architecture on the node, since a mixed
 // node can only run what all of its cards support.
 func nodeArch(node *Node) arch {
-	out := arch{name: "unknown", bf16: true, fp8: true, int4: true, flashAttention2: true}
+	out := arch{name: "unknown", bf16: true, fp8: true, fp8Weights: true, nvfp4: true,
+		int4: true, flashAttention2: true}
 	for i, g := range node.GPUs {
 		a := archOf(g.Name)
 		if i == 0 {
@@ -604,8 +682,14 @@ func nodeArch(node *Node) arch {
 		}
 		out.bf16 = out.bf16 && a.bf16
 		out.fp8 = out.fp8 && a.fp8
+		out.fp8Weights = out.fp8Weights && a.fp8Weights
+		out.nvfp4 = out.nvfp4 && a.nvfp4
 		out.int4 = out.int4 && a.int4
 		out.flashAttention2 = out.flashAttention2 && a.flashAttention2
+		out.fp8KVCache = out.fp8KVCache && a.fp8KVCache
+		// Capabilities fold by AND, but a *limitation* has to fold by OR: one
+		// crippled card in the node cripples the whole node.
+		out.crippledFP16 = out.crippledFP16 || a.crippledFP16
 		if a.name != out.name {
 			out.name = "mixed"
 		}
@@ -615,25 +699,92 @@ func nodeArch(node *Node) arch {
 
 // precisionLadder lists the weight formats to try, best first, for a given
 // architecture. Each step trades quality for memory.
-func precisionLadder(a arch) []string {
+// nativePrecision is the format an unquantized checkpoint can be served in on
+// this hardware, with no second repository involved.
+//
+// There is deliberately no step below full precision here. fp8, AWQ, GPTQ and
+// NVFP4 are all properties of a *checkpoint*: the weights are stored quantized
+// on disk with the scales beside them. vLLM's --quantization flag says "this
+// checkpoint is already in that format", it does not convert anything. Offering
+// a step down from a bf16 repository therefore produced a plan that could only
+// ever fail at launch, which is exactly what it did:
+//
+//	Value error, Cannot find the config file for awq
+//
+// When native precision does not fit, the answer is a different repository, and
+// planGPU says so instead of guessing.
+func nativePrecision(a arch) string {
 	switch {
-	case a.fp8:
-		// fp8 is near-lossless and halves weight memory, so it is preferred
-		// over bf16 outright; the freed VRAM becomes KV cache.
-		return []string{"fp8", "awq"}
-	case a.bf16 && a.int4:
-		return []string{"bf16", "awq"}
-	case a.bf16:
-		return []string{"bf16"}
-	case a.int4:
-		return []string{"fp16", "awq"}
 	case a.crippledFP16:
 		// Half precision is 64x slower than single here, so fp32 is the only
 		// usable format -- and it needs twice the memory of fp16.
-		return []string{"fp32"}
+		return "fp32"
+	case a.bf16:
+		return "bf16"
 	}
-	// Volta: fp16 only, with no smaller fallback.
-	return []string{"fp16"}
+	return "fp16"
+}
+
+// canonicalQuant maps the quant_method recorded in a checkpoint's config.json
+// onto the vocabulary used for sizing and for vLLM's --quantization flag.
+func canonicalQuant(published string) string {
+	switch strings.ToLower(published) {
+	case "fp8", "fbgemm_fp8":
+		return "fp8"
+	case "awq", "awq_marlin":
+		return "awq"
+	case "gptq", "gptq_marlin":
+		return "gptq"
+	case "modelopt_fp4", "nvfp4", "mxfp4":
+		return "nvfp4"
+	case "compressed-tensors", "compressed_tensors":
+		// The wrapper does not say which scheme is inside without reading the
+		// per-layer config. vLLM detects it correctly from the checkpoint, so
+		// the flag is passed through verbatim and sizing falls back to the
+		// conservative 8-bit assumption rather than claiming 4-bit savings.
+		return "compressed-tensors"
+	}
+	return strings.ToLower(published)
+}
+
+// canRunQuant reports whether this architecture can execute a checkpoint
+// published in the given format, and if not, why.
+func canRunQuant(a arch, quant string) (bool, string) {
+	switch quant {
+	case "fp8", "compressed-tensors":
+		if a.fp8 || a.fp8Weights {
+			return true, ""
+		}
+		return false, "fp8 checkpoints need Ampere or newer"
+	case "awq", "gptq":
+		if a.int4 {
+			return true, ""
+		}
+		return false, "AWQ and GPTQ kernels need Turing or newer"
+	case "nvfp4":
+		if a.nvfp4 {
+			return true, ""
+		}
+		return false, "NVFP4 needs Blackwell"
+	case "bf16":
+		if a.bf16 {
+			return true, ""
+		}
+		return false, "bfloat16 needs Ampere or newer"
+	}
+	return true, ""
+}
+
+// isBlackwell distinguishes Blackwell from Ada among the parts that have fp8,
+// because only Blackwell adds hardware NVFP4.
+func isBlackwell(name string) bool {
+	n := strings.ToUpper(name)
+	for _, b := range []string{"B100", "B200", "GB200", "B300", "5090", "5080", "RTX PRO"} {
+		if strings.Contains(n, b) {
+			return true
+		}
+	}
+	return false
 }
 
 // supportsFP8 reports whether every GPU on the node has hardware FP8.
@@ -744,15 +895,6 @@ func humanBytes(b int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTP"[exp])
 }
 
-func indexOf(list []string, want string) int {
-	for i, v := range list {
-		if v == want {
-			return i
-		}
-	}
-	return -1
-}
-
 func maxInt(a, b int) int {
 	if a > b {
 		return a
@@ -785,4 +927,24 @@ func SuggestPricing(info *Info) (prompt, completion, cached string) {
 			fmt.Sprintf("%.11f", perMillion/1e6), "0"), ".")
 	}
 	return f(perMPrompt), f(perMCompletion), f(perMCached)
+}
+
+// smallerFormat names the next weight format down that this hardware can run,
+// or "" if there is none. Unlike the old ladder this is advisory only: acting
+// on it means installing a different checkpoint, never changing a flag.
+func smallerFormat(a arch, current string) string {
+	switch current {
+	case "fp32", "fp16", "bf16":
+		if a.fp8Weights {
+			return "fp8"
+		}
+		if a.int4 {
+			return "awq"
+		}
+	case "fp8", "compressed-tensors":
+		if a.int4 {
+			return "awq"
+		}
+	}
+	return ""
 }

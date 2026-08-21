@@ -735,6 +735,26 @@ function renderInspectResult(d) {
       </p>
     </div>
 
+    ${d.quant_candidates && d.quant_candidates.length ? `
+    <div class="step">
+      <h3>This model needs a smaller checkpoint</h3>
+      <p class="hint">It does not fit in VRAM at full precision. Quantization is stored in the
+         weights themselves, so there is no flag that shrinks it — you install a different
+         repository. These are published versions of this same model, the owner's own first.</p>
+      ${d.quant_candidates.map(q => `
+        <div class="row" style="align-items:center;gap:10px;margin-top:6px">
+          <button class="btn" data-requant="${esc(q.repo)}">Inspect this instead</button>
+          <code>${esc(q.repo)}</code>
+          <span class="pill ${q.quant === 'fp8' ? 'ok' : 'warn'}">${esc(q.quant)}</span>
+          ${q.official ? '<span class="pill ok">official</span>' : ''}
+          <span class="hint">${fmtNum(q.downloads)} downloads</span>
+        </div>`).join('')}
+      <p class="hint" style="margin-top:10px">
+        fp8 is near-lossless and usually the right choice. 4-bit (AWQ/GPTQ) frees more VRAM
+        for concurrency but costs some output quality — worth measuring in the playground
+        before you publish.</p>
+    </div>` : (d.quant_error ? `<div class="step"><div class="note warn">${esc(d.quant_error)}</div></div>` : '')}
+
     ${d.gguf_candidates && d.gguf_candidates.length ? `
     <div class="step">
       <h3>GGUF conversion</h3>
@@ -753,6 +773,11 @@ function renderInspectResult(d) {
     <div id="install-out"></div>`;
 
   main().querySelectorAll('[data-install]').forEach(b => b.onclick = () => installOnNode(b.dataset.install, d));
+  main().querySelectorAll('[data-requant]').forEach(b => b.onclick = () => {
+    const box = document.getElementById('hfid');
+    if (box) box.value = b.dataset.requant;
+    inspectModel(b.dataset.requant);
+  });
 }
 
 function nodePlanCard(p) {

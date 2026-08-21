@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -421,4 +422,128 @@ func sortCandidates(c []GGUFCandidate) {
 			c[j-1], c[j] = b, a
 		}
 	}
+}
+
+// QuantCandidate is a pre-quantized publication of a model.
+type QuantCandidate struct {
+	Repo      string `json:"repo"`
+	Quant     string `json:"quant"`
+	Downloads int64  `json:"downloads"`
+	Official  bool   `json:"official"`
+}
+
+// quantSuffixes maps the decoration people put on a repo name onto the
+// quantization scheme it denotes. Only formats vLLM can serve are listed:
+// MLX is Apple-only and GGUF belongs to llama.cpp, so both are absent and are
+// rejected as "not a quantization" by the variant test below.
+var quantSuffixes = map[string]string{
+	"fp8": "fp8", "w8a8": "fp8", "fp8-dynamic": "fp8", "fp8dynamic": "fp8",
+	"awq": "awq", "gptq": "gptq", "w4a16": "awq", "int4": "awq", "4bit": "awq",
+	"nvfp4": "nvfp4", "fp4": "nvfp4", "mxfp4": "nvfp4",
+}
+
+// ResolveQuantized finds pre-quantized publications of a model.
+//
+// This exists because quantization is a property of a checkpoint, not a runtime
+// switch. Telling vLLM "--quantization awq" against a bf16 repository does not
+// quantize anything; it looks for an AWQ config that is not there and exits.
+// So when a model does not fit at its native precision, the answer is a
+// different repository, and the operator should not have to go and find it.
+func (c *Client) ResolveQuantized(ctx context.Context, id string) ([]QuantCandidate, error) {
+	owner, name, ok := strings.Cut(id, "/")
+	if !ok {
+		return nil, fmt.Errorf("model id must be in owner/name form, got %q", id)
+	}
+
+	var results []struct {
+		ModelID   string `json:"modelId"`
+		Downloads int64  `json:"downloads"`
+	}
+	url := fmt.Sprintf("%s/api/models?search=%s&sort=downloads&direction=-1&limit=50", hfAPI, name)
+	if err := c.getJSON(ctx, url, &results); err != nil {
+		return nil, err
+	}
+
+	seen := map[string]bool{}
+	var out []QuantCandidate
+	for _, r := range results {
+		if seen[r.ModelID] {
+			continue
+		}
+		seen[r.ModelID] = true
+
+		candOwner, candName, ok := strings.Cut(r.ModelID, "/")
+		if !ok {
+			continue
+		}
+		// mlx-community republishes everything in a format only Apple silicon
+		// can read, and its repo names carry no marker saying so.
+		if strings.EqualFold(candOwner, "mlx-community") {
+			continue
+		}
+		quant, ok := quantVariantOf(candName, name)
+		if !ok {
+			continue
+		}
+		out = append(out, QuantCandidate{
+			Repo: r.ModelID, Quant: quant, Downloads: r.Downloads,
+			Official: strings.EqualFold(candOwner, owner),
+		})
+	}
+
+	// The model's own publisher first, then by popularity. An official FP8 repo
+	// is worth far more than a more-downloaded community 4-bit one: it is the
+	// same weights, quantized by the people who trained them.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Official != out[j].Official {
+			return out[i].Official
+		}
+		return out[i].Downloads > out[j].Downloads
+	})
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no pre-quantized publication of %s found on HuggingFace", id)
+	}
+	return out, nil
+}
+
+// quantVariantOf reports whether a candidate repo is the requested model
+// republished in a smaller format, and which format that is.
+//
+// The test is deliberately strict. HuggingFace search is fuzzy, and a query for
+// "Qwen3.8-27B" returns dozens of abliterated, uncensored and merged
+// derivatives. Those are different models with different behaviour; serving one
+// in place of the requested model would be a silent substitution. So every
+// component after the model name must be recognisably quantization metadata,
+// and anything unrecognised rejects the candidate.
+func quantVariantOf(candidate, model string) (string, bool) {
+	c, m := strings.ToLower(candidate), strings.ToLower(model)
+	if !strings.HasPrefix(c, m) {
+		return "", false
+	}
+	rest := strings.Trim(strings.TrimPrefix(c, m), "-._")
+	if rest == "" {
+		return "", false // the original repo, not a quantization of it
+	}
+	quant := ""
+	for _, part := range strings.FieldsFunc(rest, func(r rune) bool {
+		return r == '-' || r == '.' || r == '_'
+	}) {
+		if q, ok := quantSuffixes[part]; ok {
+			// "AWQ-INT4" names one scheme twice; keep the first, which is the
+			// more specific kernel name.
+			if quant == "" {
+				quant = q
+			}
+			continue
+		}
+		// Bare precision markers that add nothing and change nothing.
+		if part == "quantized" || part == "quant" || part == "vllm" {
+			continue
+		}
+		return "", false
+	}
+	if quant == "" {
+		return "", false
+	}
+	return quant, true
 }
