@@ -97,7 +97,61 @@ func detectCPUModel() string {
 	return ""
 }
 
+// detectRAM returns the memory this process may actually use.
+//
+// /proc/meminfo reports the host's memory even inside a container, so a pod
+// limited to 50GB on a 512GB machine reports 512GB. That is not a cosmetic
+// error: the planner uses this figure to decide whether a model's weights can
+// be staged into host memory at all, and an inflated reading turns that check
+// into a rubber stamp. The cgroup limit is the real ceiling, so the smaller of
+// the two wins.
 func detectRAM() int64 {
+	host := hostRAM()
+	limit := cgroupMemoryLimit()
+	if limit > 0 && (host == 0 || limit < host) {
+		return limit
+	}
+	return host
+}
+
+// cgroupMemoryLimit reads the container's memory ceiling, trying cgroup v2
+// first and falling back to v1. Zero means unlimited or unreadable.
+func cgroupMemoryLimit() int64 {
+	for _, path := range []string{
+		"/sys/fs/cgroup/memory.max",                   // cgroup v2
+		"/sys/fs/cgroup/memory/memory.limit_in_bytes", // cgroup v1
+	} {
+		if n := parseCgroupMemoryFile(path); n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// parseCgroupMemoryFile reads one cgroup memory file, returning zero when it is
+// absent, unreadable, or says the limit is unlimited.
+func parseCgroupMemoryFile(path string) int64 {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	v := strings.TrimSpace(string(raw))
+	if v == "max" {
+		return 0
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	// cgroup v1 signals "unlimited" with a value near the maximum int64, which
+	// would otherwise look like an enormous but legitimate limit.
+	if n > 1<<62 {
+		return 0
+	}
+	return n
+}
+
+func hostRAM() int64 {
 	switch runtime.GOOS {
 	case "linux":
 		f, err := os.Open("/proc/meminfo")

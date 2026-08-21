@@ -592,3 +592,35 @@ func TestKVCacheDTypeReachesTheCommand(t *testing.T) {
 		}
 	}
 }
+
+// TestCgroupMemoryLimitParsing covers the values a container actually reports.
+// Getting this wrong is not cosmetic: /proc/meminfo shows the host's memory
+// inside a container, so a pod limited to 50GB on a 512GB machine reports
+// 512GB, and the planner's check that weights can be staged into host memory
+// becomes a rubber stamp.
+func TestCgroupMemoryLimitParsing(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int64
+	}{
+		{"cgroup v2 limit", "53687091200\n", 53687091200},
+		{"cgroup v2 unlimited", "max\n", 0},
+		{"cgroup v1 unlimited sentinel", "9223372036854771712\n", 0},
+		{"garbage", "not a number\n", 0},
+		{"zero", "0\n", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "memory.max")
+			if err := os.WriteFile(path, []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got := parseCgroupMemoryFile(path)
+			if got != c.want {
+				t.Errorf("parsing %q gave %d, want %d", c.body, got, c.want)
+			}
+		})
+	}
+}
