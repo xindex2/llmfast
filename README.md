@@ -188,30 +188,76 @@ public IP and no certificate, and it survives the pod's address changing.
               api.llmfa.st                    the gateway
 ```
 
-### 1. Set up the pod
+### 1. Get the code onto the pod
 
-Open the **web terminal** from the RunPod console — you already enabled it — or
-SSH in with the port RunPod gave you:
+**If this repository is private** — and it is by default — GitHub answers an
+unauthenticated request with a 404, so `curl` and `git clone` on the pod cannot
+see it. That is not a broken URL, it is the repository being private.
+
+The simplest route needs no credentials on the pod at all. Build on your own
+machine and copy the two binaries up:
 
 ```bash
-ssh root@69.30.85.5 -p 22105
+# on your machine, in the repo
+make build-linux
+
+SSH_IP=69.30.85.5      # from the RunPod console
+SSH_PORT=22105
+
+ssh root@$SSH_IP -p $SSH_PORT 'mkdir -p /workspace/llmfast/dist'
+scp -P $SSH_PORT dist/llmfast-linux-amd64       root@$SSH_IP:/workspace/llmfast/dist/llmfast
+scp -P $SSH_PORT dist/llmfast-agent-linux-amd64 root@$SSH_IP:/workspace/llmfast/dist/llmfast-agent
+scp -P $SSH_PORT scripts/setup-pod.sh           root@$SSH_IP:/workspace/
+ssh root@$SSH_IP -p $SSH_PORT 'chmod +x /workspace/llmfast/dist/*'
 ```
 
-Then run:
+They are static binaries with no dependencies, about 20MB together.
+
+<details>
+<summary>Alternatives: deploy key, or a public repository</summary>
+
+**Deploy key** — read-only access for this one pod, if you would rather pull
+than push:
+
+```bash
+# on the pod
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519 -C "runpod"
+cat ~/.ssh/id_ed25519.pub
+# paste that at github.com/xindex2/llmfast/settings/keys, leave write access off
+git clone git@github.com:xindex2/llmfast.git /workspace/llmfast
+```
+
+**Public repository** — then the one-liner works:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xindex2/llmfast/main/scripts/setup-pod.sh | bash
 ```
 
-That installs Go, vLLM and cloudflared, builds the gateway and agent, generates
-your tokens, writes a config, and prints the hardware it found. It takes a few
-minutes, mostly installing vLLM. Everything lands in `/workspace` so a pod
-restart does not lose it.
+Worth thinking about before you flip it. Making it public means anyone can read
+and reuse the gateway, the planner and the agent. Nothing here is secret —
+tokens live in `/workspace/llmfast.env` and never in the repo — so it is a
+question of whether you want the work visible, not a security one.
 
-Check the hardware line says your A40 with 48GB. If it does not, nothing after
-this will work.
+</details>
 
-### 2. Start the agent
+### 2. Run the setup script
+
+Open the **web terminal** from the RunPod console, or SSH in:
+
+```bash
+ssh root@69.30.85.5 -p 22105
+bash /workspace/setup-pod.sh
+```
+
+It installs vLLM and cloudflared, generates your tokens, writes a config, and
+prints the hardware it found. A few minutes, mostly vLLM. If you copied binaries
+up it skips the build entirely; if you cloned, it builds from source. Everything
+lands in `/workspace`, so a pod restart does not lose it.
+
+**Check the hardware line says your A40 with 48GB.** If it does not, stop —
+nothing after this will work.
+
+### 3. Start the agent
 
 ```bash
 source /workspace/llmfast.env
@@ -223,7 +269,7 @@ source /workspace/llmfast.env
 Leave it running. `-hf-cache /workspace/hf` puts model weights on the volume, so
 a restart does not re-download 20GB.
 
-### 3. Start the gateway
+### 4. Start the gateway
 
 New terminal tab:
 
@@ -234,7 +280,7 @@ cd /workspace && /workspace/llmfast/dist/llmfast -config /workspace/config.yaml
 
 It prints an API key the first time it runs. Save that — it is shown once.
 
-### 4. Point api.llmfa.st at it
+### 5. Point api.llmfa.st at it
 
 New terminal tab:
 
@@ -253,7 +299,7 @@ correct — leave it proxied, a tunnel only works that way.
 `llmfa.st` itself stays exactly as it is on Netlify. You are only adding the
 `api` subdomain.
 
-### 5. Check that it actually streams
+### 6. Check that it actually streams
 
 This is the step worth not skipping:
 
@@ -278,7 +324,7 @@ on the API hostname, or a Free/Pro plan cutting a request off after 100 seconds
 of silence. If you cannot clear it, move the gateway to a small VPS and
 terminate TLS there instead — see [deploy/nginx.conf](deploy/nginx.conf).
 
-### 6. Open the admin UI
+### 7. Open the admin UI
 
 The admin listener stays on localhost deliberately: it exposes API keys and your
 full request history. Reach it through a tunnel from your own machine:
@@ -293,7 +339,7 @@ Then open <http://localhost:8081>. Your token:
 source /workspace/llmfast.env && echo $LLMFAST_ADMIN_TOKEN
 ```
 
-### 7. Install a model and measure it
+### 8. Install a model and measure it
 
 In the admin UI:
 
@@ -317,12 +363,16 @@ tmux new -s llmfast
 # Ctrl-b d to detach; tmux attach -t llmfast to come back
 ```
 
-To upgrade later:
+To upgrade later, rebuild on your machine and copy the binaries up again:
 
 ```bash
-cd /workspace/llmfast && git pull && make build
-# then restart the three processes
+make build-linux
+scp -P 22105 dist/llmfast-linux-amd64       root@69.30.85.5:/workspace/llmfast/dist/llmfast
+scp -P 22105 dist/llmfast-agent-linux-amd64 root@69.30.85.5:/workspace/llmfast/dist/llmfast-agent
+# then restart the three processes on the pod
 ```
+
+Or, if you cloned with a deploy key: `cd /workspace/llmfast && git pull && make build`.
 
 Your config and installed models live in `/workspace`, outside the repo, so a
 `git pull` never touches them.

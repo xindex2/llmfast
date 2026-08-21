@@ -1,12 +1,27 @@
 #!/usr/bin/env bash
 # Prepare a fresh RunPod pod to serve models.
 #
-# Installs Go, vLLM and cloudflared, builds the gateway and agent, and writes a
-# config. It does not start anything: read what it prints, then start the pieces
-# yourself so you can see each one come up.
+# Installs vLLM and cloudflared, gets the gateway and agent onto the box, and
+# writes a config. It does not start anything: read what it prints, then start
+# the pieces yourself so you can watch each one come up.
 #
-# Run it from the pod's web terminal or over SSH:
-#   curl -fsSL https://raw.githubusercontent.com/xindex2/llmfast/main/scripts/setup-pod.sh | bash
+# There are three ways the code can arrive here, and the script copes with all
+# of them:
+#
+#   1. Binaries already copied up (no git, no Go needed):
+#        # on your machine
+#        make build-linux
+#        scp -P <port> dist/llmfast-linux-amd64 root@<ip>:/workspace/llmfast/dist/llmfast
+#        scp -P <port> dist/llmfast-agent-linux-amd64 root@<ip>:/workspace/llmfast/dist/llmfast-agent
+#        scp -P <port> scripts/setup-pod.sh root@<ip>:/workspace/
+#        # then on the pod
+#        bash /workspace/setup-pod.sh
+#
+#   2. Already inside a clone:
+#        cd /workspace/llmfast && bash scripts/setup-pod.sh
+#
+#   3. Public repository:
+#        curl -fsSL https://raw.githubusercontent.com/xindex2/llmfast/main/scripts/setup-pod.sh | bash
 set -euo pipefail
 
 WORKDIR="${WORKDIR:-/workspace}"
@@ -27,23 +42,65 @@ say "System packages"
 apt-get update -qq
 apt-get install -y -qq git curl ca-certificates >/dev/null
 
-say "Go ${GO_VERSION}"
-if ! command -v go >/dev/null 2>&1; then
-  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
+say "llmfast binaries"
+REPO="$WORKDIR/llmfast"
+# If this script is being run from inside a checkout, use that one.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+if [ -f "$SCRIPT_DIR/../go.mod" ]; then
+  REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
+  echo "using the checkout this script came from: $REPO"
 fi
-export PATH=$PATH:/usr/local/go/bin
-grep -q '/usr/local/go/bin' ~/.bashrc 2>/dev/null || echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-go version
 
-say "llmfast"
-if [ -d "$WORKDIR/llmfast/.git" ]; then
-  cd "$WORKDIR/llmfast" && git pull --ff-only
+if [ -x "$REPO/dist/llmfast" ] && [ -x "$REPO/dist/llmfast-agent" ]; then
+  # Binaries were copied up. Nothing to build, and Go is not needed at all.
+  echo "binaries already present, skipping the build"
+elif [ -f "$REPO/go.mod" ]; then
+  say "Go ${GO_VERSION}"
+  if ! command -v go >/dev/null 2>&1; then
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
+  fi
+  export PATH=$PATH:/usr/local/go/bin
+  grep -q '/usr/local/go/bin' ~/.bashrc 2>/dev/null || echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+  go version
+  ( cd "$REPO" && make build )
+elif git clone -q https://github.com/xindex2/llmfast.git "$REPO" 2>/dev/null; then
+  say "Go ${GO_VERSION}"
+  if ! command -v go >/dev/null 2>&1; then
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
+  fi
+  export PATH=$PATH:/usr/local/go/bin
+  go version
+  ( cd "$REPO" && make build )
 else
-  git clone -q https://github.com/xindex2/llmfast.git "$WORKDIR/llmfast"
-  cd "$WORKDIR/llmfast"
+  cat <<'NOREPO'
+
+Could not fetch the source, and no binaries were found.
+
+If the repository is private, GitHub answers an unauthenticated request with a
+404, so a plain clone or curl cannot see it. Two ways forward:
+
+  Copy the binaries up from your own machine — simplest, and needs no
+  credentials on the pod at all:
+
+    make build-linux
+    ssh root@<ip> -p <port> 'mkdir -p /workspace/llmfast/dist'
+    scp -P <port> dist/llmfast-linux-amd64       root@<ip>:/workspace/llmfast/dist/llmfast
+    scp -P <port> dist/llmfast-agent-linux-amd64 root@<ip>:/workspace/llmfast/dist/llmfast-agent
+    scp -P <port> scripts/setup-pod.sh           root@<ip>:/workspace/
+    ssh root@<ip> -p <port> 'chmod +x /workspace/llmfast/dist/* && bash /workspace/setup-pod.sh'
+
+  Or give the pod read-only access with a deploy key:
+
+    ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519 -C "runpod"
+    cat ~/.ssh/id_ed25519.pub
+    # paste that at github.com/xindex2/llmfast/settings/keys — leave write access off
+    git clone git@github.com:xindex2/llmfast.git /workspace/llmfast
+    bash /workspace/llmfast/scripts/setup-pod.sh
+
+NOREPO
+  exit 1
 fi
-make build
-echo "built: $(ls dist/)"
+echo "binaries: $(ls "$REPO/dist" 2>/dev/null | tr '\n' ' ')"
 
 say "vLLM"
 # RunPod pods cannot normally run Docker inside themselves, so the engine is
@@ -117,21 +174,21 @@ else
 fi
 
 say "Hardware detected"
-"$WORKDIR/llmfast/dist/llmfast-agent" -hardware -state-dir "$WORKDIR/state" || true
+"$REPO/dist/llmfast-agent" -hardware -state-dir "$WORKDIR/state" || true
 
-cat <<'NEXT'
+cat <<NEXT
 
 Ready. Three things to start, each in its own terminal tab.
 
   source /workspace/llmfast.env
 
   1) the agent — supervises engines
-     /workspace/llmfast/dist/llmfast-agent \
+     $REPO/dist/llmfast-agent \
        -listen 127.0.0.1:9900 -name gpu-a \
        -state-dir /workspace/state -hf-cache /workspace/hf -mode native
 
   2) the gateway — the API and admin UI
-     cd /workspace && /workspace/llmfast/dist/llmfast -config /workspace/config.yaml
+     cd /workspace && $REPO/dist/llmfast -config /workspace/config.yaml
 
   3) the tunnel — puts api.llmfa.st in front of it
      cloudflared tunnel login
@@ -140,6 +197,6 @@ Ready. Three things to start, each in its own terminal tab.
      cloudflared tunnel --url http://127.0.0.1:8080 run llmfast
 
 Your admin token is in /workspace/llmfast.env. Print it with:
-  source /workspace/llmfast.env && echo $LLMFAST_ADMIN_TOKEN
+  source /workspace/llmfast.env && echo \$LLMFAST_ADMIN_TOKEN
 
 NEXT
