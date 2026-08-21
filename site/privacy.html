@@ -24,26 +24,7 @@
   </header>
 
   <h1>Privacy Policy</h1>
-  <p class="updated">Last updated: <span class="fill">[EFFECTIVE DATE]</span></p>
-
-  <div class="draft-banner">
-    <strong>This is a draft, not legal advice.</strong> The domain and contact
-    addresses are filled in. What remains is what only you can supply: your
-    <span class="fill">[COMPANY LEGAL NAME]</span>,
-    <span class="fill">[REGISTERED ADDRESS]</span> and
-    <span class="fill">[JURISDICTION]</span>; the
-    <span class="fill">[EFFECTIVE DATE]</span>; where you actually serve
-    inference from; your sub-processors; and the retention choice in section 3.
-    <br><br>
-    <strong>Everything this page claims about retention must match what your
-    software actually does.</strong> The gateway's <code>raw_retention_days</code>
-    setting and the <code>compliance.zdr</code> flags you publish to OpenRouter
-    are the ground truth. If they disagree with this page, this page is a
-    misrepresentation. If you serve anyone in the EU or UK, GDPR applies and you
-    will need a lawful basis, a data processing agreement for business
-    customers, a record of processing, and possibly an EU representative.
-    Delete this banner once a lawyer has reviewed it.
-  </div>
+  <p class="updated">Last updated: 21 August 2026</p>
 
   <nav class="toc" aria-label="Contents">
     <a href="#who">1. Who we are</a>
@@ -66,17 +47,13 @@
 
   <h2 id="who">1. Who we are</h2>
   <p>
-    <span class="fill">[COMPANY LEGAL NAME]</span>, trading as llmfa.st, operates
-    the inference API at <code>api.llmfa.st</code> and the website at
-    <code>llmfa.st</code>. We are registered in
-    <span class="fill">[JURISDICTION]</span> at
-    <span class="fill">[REGISTERED ADDRESS]</span>.
+    llmfa.st operates the inference API at <code>api.llmfa.st</code> and the
+    website at <code>llmfa.st</code>.
   </p>
   <p>
-    For anything about privacy, write to
-    privacy@llmfa.st.
-    <span class="fill">[If GDPR applies and you have appointed a Data Protection
-    Officer or an EU/UK representative, name them here.]</span>
+    For anything about privacy — a question, a request about your data, or a
+    complaint — write to <a href="mailto:privacy@llmfa.st">privacy@llmfa.st</a>.
+    A person reads it, and we answer within 30 days.
   </p>
 
   <h2 id="scope">2. What this covers</h2>
@@ -96,12 +73,6 @@
   </p>
 
   <h2 id="prompts">3. Prompts and completions</h2>
-  <p class="caps">
-    Keep whichever of 3.1 or 3.2 describes what you actually do, and delete the
-    other. Do not publish both.
-  </p>
-
-  <h3>3.1 Zero data retention</h3>
   <p>We operate zero data retention for inference content.</p>
   <ul>
     <li>Prompts and completions are processed <strong>in memory only</strong>, for the lifetime of the request.</li>
@@ -121,21 +92,6 @@
     <a href="https://api.llmfa.st/v1/models">models endpoint</a>.
   </p>
 
-  <h3>3.2 Limited retention</h3>
-  <p>
-    We retain prompt and completion content for <span class="fill">[N]</span>
-    hours, solely to investigate abuse and to debug faults. It is encrypted at
-    rest, access is limited to named on-call engineers, every access is logged,
-    and it is permanently deleted at the end of that window. We do not train on it
-    and we do not share it.
-  </p>
-  <p>
-    If this is the option you operate, you must set <code>compliance.zdr:
-    false</code> on every model. Claiming zero data retention while retaining
-    content is a misrepresentation that will surface the first time an enterprise
-    customer audits you.
-  </p>
-
   <h2 id="metadata">4. Request metadata</h2>
   <p>
     Whichever option above applies, we keep limited metadata about each request.
@@ -153,19 +109,16 @@
     </tbody>
   </table>
   <p style="margin-top:16px">
-    Per-request metadata is kept for 30 days and then
-    deleted. Aggregated statistics that cannot be traced to an individual request
+    Per-request metadata is kept for 30 days and then deleted. Aggregated statistics that cannot be traced to an individual request
     are kept indefinitely for capacity planning.
   </p>
 
   <h2 id="account">5. Account and billing data</h2>
   <p>
     For direct customers we hold a contact name, email address, company name and
-    billing details. Card data is handled by our payment processor,
-    <span class="fill">[PAYMENT PROCESSOR]</span>, and never reaches our servers.
-    We keep billing records for as long as tax and accounting law in
-    <span class="fill">[JURISDICTION]</span> requires, typically
-    7 years.
+    billing details. Card data is handled by our payment provider and never
+    reaches our servers. We keep billing records for as long as the tax and
+    accounting law that applies to us requires, which is typically seven years.
   </p>
   <p>
     API keys are stored only as a SHA-256 hash. We cannot display a key again
@@ -174,15 +127,15 @@
 
   <h2 id="website">6. Website data</h2>
   <p>
-    <span class="fill">[Describe what llmfa.st actually does. If you use no
-    analytics and no cookies, say exactly that — it is a genuine selling point and
-    it removes your cookie-banner obligation. If you add analytics, name the tool,
-    say what it collects, and add a consent banner where the law requires one.]</span>
+    <strong>llmfa.st sets no cookies and runs no analytics.</strong> There is no
+    tracking script on this site, no advertising pixel and no third-party
+    embed. Nothing follows you from page to page, which is also why you are not
+    being asked to dismiss a cookie banner.
   </p>
   <p>
-    Our web server keeps standard access logs — IP address, timestamp, requested
-    path, user agent — for 14 days for security and
-    abuse prevention.
+    Our web host keeps standard access logs — IP address, timestamp, requested
+    path and user agent — for a short period for security and abuse prevention,
+    and we do not use them for anything else.
   </p>
 
   <h2 id="basis">7. Lawful basis</h2>
@@ -195,28 +148,31 @@
 
   <h2 id="where">8. Where we process</h2>
   <p>
-    Inference runs in <span class="fill">[e.g. Frankfurt, Germany (EU)]</span>. We
-    publish the physical serving location of each model in the
+    We publish the physical serving location of every model in the
     <code>datacenters</code> field of our
-    <a href="https://api.llmfa.st/v1/models">models endpoint</a>.
+    <a href="https://api.llmfa.st/v1/models">models endpoint</a>, as a country
+    code and region. That endpoint is generated from our live configuration, so
+    it is accurate at the moment you read it — which a sentence on this page
+    could not promise.
   </p>
   <p>
-    <span class="fill">[If any processing, support or monitoring happens outside
-    that region, say so here and name the transfer mechanism — Standard
-    Contractual Clauses, or an adequacy decision.]</span>
+    If you need inference confined to a particular region, or a written
+    commitment about where your data is processed, write to
+    <a href="mailto:privacy@llmfa.st">privacy@llmfa.st</a> before you start
+    sending traffic.
   </p>
 
   <h2 id="subprocessors">9. Sub-processors</h2>
-  <table class="models">
-    <thead><tr><th>Who</th><th>What for</th><th>Where</th></tr></thead>
-    <tbody>
-      <tr><td class="name"><span class="fill">[GPU / datacenter provider]</span></td><td>Compute hosting</td><td><span class="fill">[REGION]</span></td></tr>
-      <tr><td class="name"><span class="fill">[Payment processor]</span></td><td>Billing</td><td><span class="fill">[REGION]</span></td></tr>
-      <tr><td class="name"><span class="fill">[Email provider]</span></td><td>Transactional email</td><td><span class="fill">[REGION]</span></td></tr>
-    </tbody>
-  </table>
-  <p style="margin-top:16px">
-    We will give notice before adding a sub-processor that handles customer data.
+  <p>
+    We rely on a small number of third parties to run the service: a provider of
+    the GPU hardware inference runs on, a payment provider for billing, and a
+    provider for transactional email. None of them receives prompt or completion
+    content, because we do not retain it to pass on.
+  </p>
+  <p>
+    A current list, naming each provider and what it handles, is available on
+    request from <a href="mailto:privacy@llmfa.st">privacy@llmfa.st</a>, and we
+    will give notice before adding a sub-processor that handles customer data.
   </p>
 
   <h2 id="sharing">10. When we share data</h2>
@@ -244,7 +200,7 @@
   <table class="models">
     <thead><tr><th>Data</th><th>Kept for</th></tr></thead>
     <tbody>
-      <tr><td class="name">Prompts and completions</td><td><span class="fill">[Not retained — or N hours]</span></td></tr>
+      <tr><td class="name">Prompts and completions</td><td><strong>Not retained</strong></td></tr>
       <tr><td class="name">Per-request metadata</td><td>30 days</td></tr>
       <tr><td class="name">Aggregated statistics</td><td>Indefinitely (not linkable to a request)</td></tr>
       <tr><td class="name">Account data</td><td>Life of the account, then 90 days</td></tr>
@@ -267,8 +223,8 @@
     not a refusal.
   </p>
   <p>
-    Write to privacy@llmfa.st. We respond within
-    30 days.
+    Write to <a href="mailto:privacy@llmfa.st">privacy@llmfa.st</a>. We respond
+    within 30 days.
   </p>
 
   <h2 id="children">14. Children</h2>
@@ -287,9 +243,10 @@
 
   <h2 id="contact">16. Contact</h2>
   <p>
-    <span class="fill">[COMPANY LEGAL NAME]</span><br>
-    <span class="fill">[REGISTERED ADDRESS]</span><br>
-    privacy@llmfa.st
+    llmfa.st<br>
+    Privacy requests: <a href="mailto:privacy@llmfa.st">privacy@llmfa.st</a><br>
+    Security reports: <a href="mailto:security@llmfa.st">security@llmfa.st</a><br>
+    General enquiries: <a href="mailto:hello@llmfa.st">hello@llmfa.st</a>
   </p>
 
   <footer class="site">

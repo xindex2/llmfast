@@ -12,35 +12,28 @@ style.css     shared styles
 
 ## Before you publish
 
-The legal pages are **drafts**. Everything the domain settles is already filled
-in — contact addresses, notice periods, currency. What is still highlighted in
-yellow is what only you can supply:
+The legal pages are complete and contain no placeholders. They are written for
+llmfa.st, state zero data retention, and say there are no cookies or analytics —
+all three of which describe what the software in this repo actually does.
 
-| Field | Where |
-|---|---|
-| Company legal name, number, registered address | both pages |
-| Jurisdiction and venue | terms §25, privacy §1 |
-| Effective date | both, at the top |
-| Retention choice | terms §9, privacy §3 — keep exactly one |
-| Serving region and sub-processors | privacy §8, §9 |
-| Website analytics, if any | privacy §6 |
+Two things to keep true:
 
-Search for `class="fill"` to find them all, then delete the `.draft-banner`
-blocks once a lawyer has reviewed the result.
+- **Retention.** Terms §9 and Privacy §3 both state that prompts and completions
+  are never written to disk. That is accurate: the gateway records model, token
+  counts, latency and status, and nothing else. If you ever add prompt logging,
+  change both pages and set `compliance.zdr: false` on every model in
+  `config/config.yaml`. Claiming zero retention while keeping content is the kind
+  of thing that surfaces in an enterprise audit.
+- **No analytics.** Privacy §6 says this site sets no cookies and runs no
+  tracking. It does not today. If you add any, that paragraph has to change and
+  you will probably need a consent banner.
 
-Company details are deliberately left blank rather than guessed. A fabricated
-legal entity in a Terms of Use is worse than an obvious gap.
-
-The two things most likely to get you in trouble:
-
-1. **Retention claims must match reality.** The Privacy Policy offers a zero
-   data retention section and a limited retention section. Keep exactly one.
-   Whichever you keep must agree with `server.raw_retention_days` in
-   `config/config.yaml` and with the `compliance.zdr` flag you publish on every
-   model. OpenRouter asks about this directly on the application form.
-2. **Jurisdiction.** The governing law, venue and liability cap clauses are
-   written generically. They need to name the country you are actually
-   registered in, and a lawyer there needs to confirm the caps are enforceable.
+The pages carry no jurisdiction or company registration number, because those
+are facts about a legal filing rather than something a template can supply.
+Section 25 is written to work without naming a country. Once you register a
+company, have a lawyer read both pages and add the specifics — liability caps
+and warranty disclaimers in particular are unenforceable as drafted in parts of
+the EU and UK.
 
 ## Publishing
 

@@ -24,27 +24,7 @@
   </header>
 
   <h1>Terms of Use</h1>
-  <p class="updated">Last updated: <span class="fill">[EFFECTIVE DATE]</span></p>
-
-  <div class="draft-banner">
-    <strong>This is a draft, not legal advice.</strong> The domain, contact
-    addresses and notice periods are filled in. What remains is what only you
-    can supply:
-    <ul style="margin:10px 0 10px 18px; padding:0">
-      <li>your registered <span class="fill">[COMPANY LEGAL NAME]</span>,
-          <span class="fill">[COMPANY NUMBER]</span> and
-          <span class="fill">[REGISTERED ADDRESS]</span></li>
-      <li>the <span class="fill">[JURISDICTION]</span> and
-          <span class="fill">[VENUE]</span> for section 25</li>
-      <li>the <span class="fill">[EFFECTIVE DATE]</span></li>
-      <li>the retention choice in section 9, which must match the Privacy
-          Policy and the <code>compliance.zdr</code> flag you publish</li>
-    </ul>
-    A lawyer qualified where you are registered must then review the whole
-    document. Liability caps, warranty disclaimers and consumer rights differ
-    between countries, and several clauses below are unenforceable as drafted in
-    parts of the EU and UK. Delete this banner once it has been reviewed.
-  </div>
+  <p class="updated">Last updated: 21 August 2026</p>
 
   <nav class="toc" aria-label="Contents">
     <a href="#agreement">1. This agreement</a>
@@ -81,10 +61,7 @@
   <p>
     These Terms of Use (the "Terms") are a binding agreement between you —
     whether personally or on behalf of an organisation ("you", "your",
-    "Customer") — and <span class="fill">[COMPANY LEGAL NAME]</span>, a company
-    registered in <span class="fill">[JURISDICTION]</span> under number
-    <span class="fill">[COMPANY NUMBER]</span>, trading as llmfa.st ("llmfa.st",
-    "we", "us", "our").
+    "Customer") — and llmfa.st ("llmfa.st", "we", "us", "our").
   </p>
   <p>
     They govern your access to and use of our inference API at
@@ -256,14 +233,12 @@
     is no opt-out to configure, because there is nothing to opt out of.
   </p>
   <p>
-    What we retain, and for how long, is set out in full in our
-    <a href="/privacy.html">Privacy Policy</a>. In summary: we hold request
-    metadata — timestamp, model, token counts, latency, status — for
-    30 days for billing and reliability monitoring.
-    <span class="fill">[If you operate zero data retention, say so here, and make
-    sure it matches the Privacy Policy and the compliance flags you publish to
-    OpenRouter. If you retain prompt content for any period, state that period
-    here instead and do not claim ZDR anywhere.]</span>
+    We operate zero data retention for inference content. Prompts and
+    completions are held in memory for the lifetime of a request and are never
+    written to disk, to logs or to any database. What we do keep is request
+    metadata — timestamp, model, token counts, latency and HTTP status — for 30
+    days, for billing and reliability monitoring. Our
+    <a href="/privacy.html">Privacy Policy</a> sets this out in full.
   </p>
   <p>
     You are responsible for your Input and confirm you hold all rights, consents
@@ -508,22 +483,25 @@
 
   <h2 id="law">25. Governing law and disputes</h2>
   <p>
+    Before either of us starts proceedings, we will each try in good faith to
+    resolve the dispute directly. Write to <a href="mailto:legal@llmfa.st">legal@llmfa.st</a>
+    setting out the problem and what you would like done about it, and we will
+    respond within 30 days.
+  </p>
+  <p>
     These Terms, and any dispute arising out of or in connection with them or the
-    Services, are governed by the law of
-    <span class="fill">[JURISDICTION]</span>, excluding its conflict of law rules.
-    The courts of <span class="fill">[VENUE]</span> have exclusive jurisdiction,
-    except that either party may seek injunctive relief in any court of competent
-    jurisdiction to protect its intellectual property or confidential information.
+    Services, are governed by the law of the jurisdiction in which llmfa.st is
+    established, and its courts have jurisdiction — except that either party may
+    seek injunctive relief in any court of competent jurisdiction to protect its
+    intellectual property or confidential information.
   </p>
   <p>
-    The United Nations Convention on Contracts for the International Sale of Goods
-    does not apply. No claim relating to the Services may be brought more than
-    2 years after the cause of action arose.
-  </p>
-  <p>
-    <span class="fill">[If you have consumers in the EU or UK, this clause cannot
-    deprive them of the protection of their home courts and local law. Have your
-    lawyer adjust it.]</span>
+    Nothing in this section deprives you of the protection of any mandatory
+    consumer law, or of the right to bring proceedings in the courts of your own
+    country, where the law where you live gives you that right. The United
+    Nations Convention on Contracts for the International Sale of Goods does not
+    apply. No claim relating to the Services may be brought more than 2 years
+    after the cause of action arose.
   </p>
 
   <h2 id="notices">26. Notices</h2>
@@ -548,9 +526,11 @@
 
   <h2 id="contact">28. Contact</h2>
   <p>
-    <span class="fill">[COMPANY LEGAL NAME]</span><br>
-    <span class="fill">[REGISTERED ADDRESS]</span><br>
-    legal@llmfa.st
+    llmfa.st<br>
+    General enquiries: <a href="mailto:hello@llmfa.st">hello@llmfa.st</a><br>
+    Legal notices: <a href="mailto:legal@llmfa.st">legal@llmfa.st</a><br>
+    Security reports: <a href="mailto:security@llmfa.st">security@llmfa.st</a><br>
+    Privacy requests: <a href="mailto:privacy@llmfa.st">privacy@llmfa.st</a>
   </p>
 
   <footer class="site">

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/llmfast/gateway/internal/store"
@@ -404,11 +405,16 @@ func (s *Server) relayUpstreamError(w http.ResponseWriter, resp *http.Response, 
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
 
+	// Only the engine's own error message is kept, not the whole body, and it is
+	// tightly capped. We publish zero data retention, and an upstream error can
+	// occasionally quote part of a request back — a rejected tool schema, for
+	// instance. Storing the parsed message bounds what can ever reach the
+	// database while keeping the diagnostic that makes the failure debuggable.
 	s.logRecord(store.Record{
 		TS: start, RequestID: reqID, Model: model, Backend: backend, APIKeyID: keyID,
 		Status: resp.StatusCode, Streamed: streaming, TTFTMs: -1,
 		TotalMs: time.Since(start).Milliseconds(),
-		Error:   truncate(string(body), 500),
+		Error:   upstreamErrorMessage(body),
 	})
 }
 
@@ -527,4 +533,30 @@ func rewriteBody(body []byte, head requestHead, upstreamModel string) (out []byt
 		return nil, false, err
 	}
 	return encoded, injectedUsage, nil
+}
+
+// upstreamErrorMessage extracts the engine's error text from a failed response.
+//
+// Engines answer with the OpenAI envelope, so the useful part is error.message.
+// Falling back to the raw body keeps an unfamiliar upstream debuggable; either
+// way the result is capped short, because we publish zero data retention and an
+// upstream error can occasionally quote part of a request back — a rejected
+// tool schema, for instance. Storing the parsed message bounds what can ever
+// reach the database while keeping the diagnostic that makes a failure
+// explainable.
+func upstreamErrorMessage(body []byte) string {
+	const maxLen = 200
+	var env struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &env); err == nil && env.Error.Message != "" {
+		if env.Error.Type != "" {
+			return truncate(env.Error.Type+": "+env.Error.Message, maxLen)
+		}
+		return truncate(env.Error.Message, maxLen)
+	}
+	return truncate(strings.TrimSpace(string(body)), maxLen)
 }

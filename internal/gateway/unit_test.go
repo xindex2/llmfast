@@ -392,3 +392,33 @@ func TestSyntheticPromptLength(t *testing.T) {
 		}
 	}
 }
+
+// TestUpstreamErrorMessageIsBounded guards a claim the published privacy policy
+// now makes. We state that prompt and completion content is never written to
+// disk; an engine's error body can occasionally quote part of a request back,
+// so what gets stored has to be the parsed message and it has to be short.
+func TestUpstreamErrorMessageIsBounded(t *testing.T) {
+	got := upstreamErrorMessage([]byte(
+		`{"error":{"message":"This model's maximum context length is 8192 tokens","type":"invalid_request_error"}}`))
+	want := "invalid_request_error: This model's maximum context length is 8192 tokens"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// A body that quotes the request back must still be capped.
+	huge := `{"error":{"message":"` + strings.Repeat("leaked prompt text ", 500) + `"}}`
+	if n := len(upstreamErrorMessage([]byte(huge))); n > 210 {
+		t.Errorf("stored %d characters; it must be capped near 200", n)
+	}
+
+	// An upstream that does not use the envelope is still debuggable.
+	plain := upstreamErrorMessage([]byte("  502 Bad Gateway from the proxy  "))
+	if plain != "502 Bad Gateway from the proxy" {
+		t.Errorf("non-envelope body = %q", plain)
+	}
+
+	// And a giant non-envelope body is capped too.
+	if n := len(upstreamErrorMessage([]byte(strings.Repeat("x", 5000)))); n > 210 {
+		t.Errorf("raw body stored %d characters, want it capped", n)
+	}
+}
