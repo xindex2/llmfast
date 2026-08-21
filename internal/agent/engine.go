@@ -30,6 +30,17 @@ type Spec struct {
 	MaxModelLen    int    `json:"max_model_len"`
 	MaxNumSeqs     int    `json:"max_num_seqs"`
 
+	// Hybrid marks a model that interleaves Mamba-style linear attention with
+	// full attention. vLLM supports neither prefix caching nor an fp8 KV cache
+	// over that recurrent state, and rejects both at startup rather than
+	// ignoring them, so the flags have to be withheld rather than merely
+	// unhelpful.
+	Hybrid bool `json:"hybrid,omitempty"`
+	// QuantFromCheckpoint says the quantization was read from the checkpoint
+	// rather than chosen. vLLM detects it from config.json and picks the right
+	// kernel for the hardware, which is more reliable than our name for it.
+	QuantFromCheckpoint bool `json:"quant_from_checkpoint,omitempty"`
+
 	// GGUFRepo overrides the auto-resolved GGUF repository for llama.cpp.
 	GGUFRepo string `json:"gguf_repo,omitempty"`
 	// ExtraArgs are appended verbatim, for tuning we do not model.
@@ -72,19 +83,30 @@ func buildVLLM(s Spec, rt Runtime, port int) (string, []string, []string, error)
 		"--served-model-name", s.ServedName,
 		"--port", strconv.Itoa(port),
 		"--host", "0.0.0.0",
-		// Prefix caching is the largest available TTFT win and produces the
-		// cached_tokens we bill at a discount.
-		"--enable-prefix-caching",
 		// Without chunked prefill, one long prompt stalls every other stream on
 		// the replica and p99 TTFT collapses under mixed traffic.
 		"--enable-chunked-prefill",
+	}
+	if !s.Hybrid {
+		// Prefix caching is the largest available TTFT win and produces the
+		// cached_tokens we bill at a discount. A hybrid model's recurrent
+		// state cannot be reused across a shared prefix, and asking for it
+		// fails at startup.
+		vllmArgs = append(vllmArgs, "--enable-prefix-caching")
 	}
 	if s.TensorParallel > 1 {
 		vllmArgs = append(vllmArgs, "--tensor-parallel-size", strconv.Itoa(s.TensorParallel))
 	}
 	// bf16 is vLLM's default for a bf16 checkpoint; passing it explicitly as a
 	// "quantization" is an error, so it is only set when it is a real scheme.
-	if s.Quantization != "" && s.Quantization != "bf16" && s.Quantization != "fp16" {
+	//
+	// A pre-quantized checkpoint describes itself in config.json, and vLLM
+	// reads that and selects a kernel appropriate to the hardware -- fp8-marlin
+	// on Ampere, native fp8 on Ada and newer. Naming the scheme ourselves can
+	// pin it to a kernel the card does not have, so the flag is only passed
+	// when we picked the format rather than read it.
+	if s.Quantization != "" && s.Quantization != "bf16" && s.Quantization != "fp16" &&
+		!s.QuantFromCheckpoint {
 		vllmArgs = append(vllmArgs, "--quantization", s.Quantization)
 	}
 	if s.MaxModelLen > 0 {

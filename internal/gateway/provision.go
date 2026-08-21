@@ -159,6 +159,8 @@ type InstallRequest struct {
 
 	Engine         string `json:"engine"`
 	Quantization   string `json:"quantization"`
+	Hybrid         bool   `json:"hybrid"`
+	QuantFromCkpt  bool   `json:"quant_from_checkpoint"`
 	KVCacheDType   string `json:"kv_cache_dtype"`
 	TensorParallel int    `json:"tensor_parallel"`
 	MaxModelLen    int    `json:"max_model_len"`
@@ -214,6 +216,7 @@ func (s *Server) adminInstall(w http.ResponseWriter, r *http.Request) {
 	spec := agent.Spec{
 		HFID: req.HFID, ServedName: req.ModelID, Engine: req.Engine,
 		Quantization: req.Quantization, KVCacheDType: req.KVCacheDType,
+		Hybrid: req.Hybrid, QuantFromCheckpoint: req.QuantFromCkpt,
 		TensorParallel: req.TensorParallel,
 		MaxModelLen:    req.MaxModelLen, MaxNumSeqs: req.MaxNumSeqs, GGUFRepo: req.GGUFRepo,
 	}

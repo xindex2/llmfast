@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -328,7 +329,7 @@ func (s *Supervisor) reap(in *Instance, cmd *exec.Cmd) {
 		return
 	}
 
-	tail := in.Logs(20)
+	tail := in.Logs(logRingSize)
 	reason := "exited"
 	if err != nil {
 		reason = err.Error()
@@ -338,10 +339,19 @@ func (s *Supervisor) reap(in *Instance, cmd *exec.Cmd) {
 	in.mu.Lock()
 	if in.restarts >= s.MaxRestarts {
 		in.state = StateFailed
-		// The last lines of output are almost always the actual cause, and
-		// they are what an operator needs without SSHing to the node.
-		in.errMsg = fmt.Sprintf("%s (gave up after %d restarts). Last output:\n%s",
-			reason, in.restarts, joinLines(tail))
+		// Report the root cause, not the tail. A Python traceback ends with
+		// whatever re-raised last -- for vLLM that is invariably
+		// "Engine core initialization failed. See root cause above." -- while
+		// the line that explains anything is dozens of frames earlier. Showing
+		// the last twenty lines therefore showed the operator the one part of
+		// the output that carries no information.
+		msg := fmt.Sprintf("%s (gave up after %d restarts)", reason, in.restarts)
+		if cause := rootCause(tail); cause != "" {
+			msg += ".\n" + cause
+		} else if len(tail) > 0 {
+			msg += ". Last output:\n" + joinLines(lastN(tail, 20))
+		}
+		in.errMsg = msg
 		in.mu.Unlock()
 		s.persist()
 		return
@@ -556,4 +566,89 @@ func joinLines(lines []string) string {
 		out += "  " + l + "\n"
 	}
 	return out
+}
+
+// uselessErrors are the lines a failing engine ends with. They are re-raises
+// from an outer frame and say nothing about what actually went wrong, but they
+// are what any "show me the last N lines" view displays.
+var uselessErrors = []string{
+	"Engine core initialization failed",
+	"See root cause above",
+	"EngineCore failed to start",
+	"Engine process failed to start",
+}
+
+// interestingErrors are the exception types worth surfacing, most specific
+// first: an out-of-memory or an unsupported-feature message tells an operator
+// what to change, where a bare RuntimeError often does not.
+var interestingErrors = []string{
+	"torch.cuda.OutOfMemoryError",
+	"OutOfMemoryError",
+	"NotImplementedError",
+	"ValueError",
+	"AssertionError",
+	"TypeError",
+	"KeyError",
+	"OSError",
+	"ImportError",
+	"ModuleNotFoundError",
+	"RuntimeError",
+}
+
+// rootCause picks the line from an engine's output that explains the failure.
+//
+// It scans forwards, because in a chained traceback the earliest exception is
+// the one that actually happened and everything after it is a re-raise.
+func rootCause(lines []string) string {
+	best, bestRank := "", len(interestingErrors)
+	for _, raw := range lines {
+		line := strings.TrimSpace(stripPIDPrefix(raw))
+		if line == "" {
+			continue
+		}
+		skip := false
+		for _, junk := range uselessErrors {
+			if strings.Contains(line, junk) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		for rank, kind := range interestingErrors {
+			if !strings.Contains(line, kind+":") {
+				continue
+			}
+			// A more specific exception replaces a vaguer one, but among
+			// equals the earliest wins -- that is the original raise.
+			if rank < bestRank {
+				best, bestRank = line, rank
+			}
+			break
+		}
+	}
+	if len(best) > 400 {
+		best = best[:400] + "…"
+	}
+	return best
+}
+
+// stripPIDPrefix removes vLLM's "(APIServer pid=123) " decoration so the
+// matching above sees the message itself.
+func stripPIDPrefix(line string) string {
+	if !strings.HasPrefix(line, "(") {
+		return line
+	}
+	if i := strings.Index(line, ") "); i > 0 && i < 40 {
+		return line[i+2:]
+	}
+	return line
+}
+
+func lastN(lines []string, n int) []string {
+	if len(lines) <= n {
+		return lines
+	}
+	return lines[len(lines)-n:]
 }

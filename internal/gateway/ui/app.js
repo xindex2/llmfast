@@ -688,8 +688,15 @@ function renderAddModel() {
          then check it against each node's hardware.</p>
       <div class="row">
         <input type="text" id="hfid" placeholder="Qwen/Qwen3-8B" spellcheck="false" autocapitalize="off">
+        <input type="number" id="ctx" placeholder="Context (auto)" min="1024" step="1024" style="max-width:180px">
         <button class="primary" id="inspect-btn">Inspect</button>
       </div>
+      <p class="hint" style="margin-top:6px">
+        Leave the context blank and it is chosen for you: the model's full window, trimmed until at
+        least 8 requests fit in the KV cache at once. Set it and that number is kept exactly, because
+        it is a real trade — every in-flight request reserves the whole window, so a longer context
+        buys fewer concurrent requests. A prompt longer than the context is rejected outright, which
+        costs uptime; low concurrency only queues.</p>
       <div class="row" style="margin-top:8px">
         <span class="muted" style="font-size:12px">Try:</span>
         ${['Qwen/Qwen3-8B', 'Qwen/Qwen3-32B', 'zai-org/GLM-4.6', 'deepseek-ai/DeepSeek-V3']
@@ -700,16 +707,19 @@ function renderAddModel() {
     <div id="inspect-out"></div>
   </div>`;
 
-  const go = () => inspectModel(document.getElementById('hfid').value.trim());
+  const go = () => inspectModel(
+    document.getElementById('hfid').value.trim(),
+    parseInt(document.getElementById('ctx').value, 10) || 0);
   document.getElementById('inspect-btn').onclick = go;
   document.getElementById('hfid').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  document.getElementById('ctx').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
   main().querySelectorAll('[data-example]').forEach(b => b.onclick = () => {
     document.getElementById('hfid').value = b.dataset.example;
     go();
   });
 }
 
-async function inspectModel(hfID) {
+async function inspectModel(hfID, wantContext) {
   const err = document.getElementById('inspect-err');
   const out = document.getElementById('inspect-out');
   err.textContent = '';
@@ -720,7 +730,7 @@ async function inspectModel(hfID) {
   try {
     d = await api('/admin/api/inspect', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hf_id: hfID }),
+      body: JSON.stringify({ hf_id: hfID, context: wantContext || 0 }),
     });
   } catch (e) {
     out.innerHTML = '';
@@ -820,7 +830,7 @@ function renderInspectResult(d) {
   main().querySelectorAll('[data-requant]').forEach(b => b.onclick = () => {
     const box = document.getElementById('hfid');
     if (box) box.value = b.dataset.requant;
-    inspectModel(b.dataset.requant);
+    inspectModel(b.dataset.requant, parseInt(document.getElementById('ctx').value, 10) || 0);
   });
 }
 
@@ -878,6 +888,8 @@ async function installOnNode(node, d) {
     engine: plan.engine, quantization: plan.quantization,
     kv_cache_dtype: plan.kv_cache_dtype,
     tensor_parallel: plan.tensor_parallel, max_model_len: plan.max_model_len,
+    hybrid: !!(d.info && d.info.is_hybrid),
+    quant_from_checkpoint: !!plan.quant_from_checkpoint,
     max_num_seqs: plan.max_num_seqs,
     gguf_repo: document.getElementById('f-gguf')?.value || '',
     prompt_usd: perTok('f-prompt'), completion_usd: perTok('f-completion'), cached_usd: perTok('f-cached'),

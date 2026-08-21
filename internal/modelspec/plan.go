@@ -146,7 +146,15 @@ func (i *Info) KVBytesPerToken() int64 {
 	if i.NumLayers == 0 || i.NumKVHeads == 0 || i.HeadDim == 0 {
 		return 0
 	}
-	return int64(2 * float64(i.NumLayers) * float64(i.NumKVHeads) * float64(i.HeadDim) * bytesKVElem)
+	// Only full-attention layers hold a cache that grows with the sequence. On
+	// an ordinary transformer that is every layer; on a hybrid model it is a
+	// fraction of them, and counting all of them overstated the per-token cost
+	// -- and so understated concurrency -- by the interleave ratio.
+	layers := i.FullAttentionLayers
+	if layers <= 0 {
+		layers = i.NumLayers
+	}
+	return int64(2 * float64(layers) * float64(i.NumKVHeads) * float64(i.HeadDim) * bytesKVElem)
 }
 
 // PlanFor produces the best plan for running a model on a node.
@@ -269,7 +277,10 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 	// grows with context length, so it is worth measuring on long prompts.
 	p.KVCacheDType = "auto"
 	p.KVBytesPerTok = info.KVBytesPerToken()
-	if a.fp8KVCache {
+	// vLLM cannot store the cache at fp8 for hybrid models: the recurrent
+	// state of a linear-attention layer has no fp8 path, and asking for one
+	// fails at engine startup rather than falling back.
+	if a.fp8KVCache && !info.IsHybrid {
 		p.KVCacheDType = "fp8"
 		p.KVBytesPerTok /= 2
 	}
@@ -339,6 +350,14 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 				"after loading them. Both wins that matter here survive that: the weights take "+
 				"half the VRAM, which is what makes this model fit, and decoding reads half as "+
 				"many bytes per token. Only the fp8 tensor-core speed-up is missing", a.name))
+	}
+	if info.IsHybrid {
+		p.Warnings = append(p.Warnings, fmt.Sprintf(
+			"hybrid attention: %d of %d layers use Mamba-style linear attention and keep a "+
+				"fixed-size state instead of a growing cache, so only %d layers cost KV per "+
+				"token. vLLM has no fp8 path for that state, so the KV cache stays at fp16 "+
+				"and prefix caching is left off -- both fail at startup on these models",
+			info.NumLayers-info.FullAttentionLayers, info.NumLayers, info.FullAttentionLayers))
 	}
 	if p.KVCacheDType == "fp8" {
 		p.Warnings = append(p.Warnings,

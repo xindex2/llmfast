@@ -45,6 +45,14 @@ type Info struct {
 	// cache is a compressed latent shared across all heads rather than
 	// per-head tensors. It changes how tensor parallelism can be applied.
 	IsMLA bool `json:"is_mla"`
+	// IsHybrid marks a model that interleaves Mamba-style linear attention
+	// with ordinary full attention. It changes two things that matter: only
+	// the full-attention layers hold a per-token KV cache, and vLLM cannot
+	// store that cache at fp8 for these models.
+	IsHybrid bool `json:"is_hybrid"`
+	// FullAttentionLayers is how many layers actually keep a KV cache. It
+	// equals NumLayers on an ordinary transformer.
+	FullAttentionLayers int `json:"full_attention_layers"`
 	// PublishedQuant is set when the checkpoint on HuggingFace is already
 	// quantized, e.g. "fp8". The download is then that size, not bf16.
 	PublishedQuant string `json:"published_quant,omitempty"`
@@ -99,6 +107,17 @@ type hfConfig struct {
 	// KV cache is a compressed latent rather than per-head tensors.
 	QLoRARank  int `json:"q_lora_rank"`
 	KVLoRARank int `json:"kv_lora_rank"`
+	// LayerTypes names each layer's attention. Hybrid models interleave
+	// "linear_attention" (a fixed-size recurrent state) with "full_attention"
+	// (a growing KV cache), and only the latter costs memory per token.
+	LayerTypes []string `json:"layer_types"`
+	// FullAttentionInterval is the shorthand some configs use instead of
+	// spelling out layer_types: every Nth layer is full attention.
+	FullAttentionInterval int `json:"full_attention_interval"`
+	// LinearConvKernelDim and MambaSSMDType appear only on models with
+	// Mamba-style linear attention.
+	LinearConvKernelDim int    `json:"linear_conv_kernel_dim"`
+	MambaSSMDType       string `json:"mamba_ssm_dtype"`
 	// QuantizationConfig is present when the published checkpoint is already
 	// quantized, which changes both the download size and the usable formats.
 	QuantizationConfig *quantConfig `json:"quantization_config"`
@@ -213,6 +232,7 @@ func (c *Client) Fetch(ctx context.Context, id string) (*Info, error) {
 	}
 	info.IsMoE = cfg.routedExperts() > 0
 	info.IsMLA = cfg.QLoRARank > 0 || cfg.KVLoRARank > 0
+	info.FullAttentionLayers, info.IsHybrid = cfg.attentionLayout()
 	if cfg.QuantizationConfig != nil {
 		info.PublishedQuant = cfg.QuantizationConfig.scheme()
 	}
@@ -596,4 +616,40 @@ func (q *quantConfig) scheme() string {
 	// Nothing legible inside. Report the wrapper, which the planner sizes
 	// conservatively rather than optimistically.
 	return "compressed-tensors"
+}
+
+// attentionLayout reports how many layers keep a growing KV cache, and whether
+// this is a hybrid model.
+//
+// Qwen3.5 and its relatives interleave Mamba-style linear attention with full
+// attention -- layer_types lists them, and full_attention_interval is the
+// shorthand. A linear-attention layer holds a fixed-size recurrent state per
+// sequence rather than a cache that grows with every token, so counting all
+// layers overstates the KV cost by the interleave ratio: fourfold on a model
+// with every fourth layer attending fully.
+func (c *hfConfig) attentionLayout() (full int, hybrid bool) {
+	if len(c.LayerTypes) > 0 {
+		for _, t := range c.LayerTypes {
+			switch strings.ToLower(t) {
+			case "full_attention", "attention":
+				full++
+			default:
+				hybrid = true
+			}
+		}
+		if hybrid {
+			return full, true
+		}
+		return full, false
+	}
+	if c.FullAttentionInterval > 1 && c.NumLayers > 0 {
+		return c.NumLayers / c.FullAttentionInterval, true
+	}
+	if c.LinearConvKernelDim > 0 || c.MambaSSMDType != "" {
+		// Known to be hybrid but the layout is not spelled out; assume every
+		// layer caches, which errs towards too little concurrency rather than
+		// too much.
+		return c.NumLayers, true
+	}
+	return c.NumLayers, false
 }
