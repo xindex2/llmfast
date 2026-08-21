@@ -49,7 +49,9 @@ type Provider struct {
 type Server struct {
 	Listen      string `yaml:"listen"`
 	AdminListen string `yaml:"admin_listen"`
-	// AdminToken gates the admin API and UI. Read from LLMFAST_ADMIN_TOKEN if empty.
+	// AdminToken gates the admin API and UI. A leading $ reads it from that
+	// environment variable, so the secret need not sit in the file. Left empty,
+	// it falls back to LLMFAST_ADMIN_TOKEN.
 	AdminToken string `yaml:"admin_token"`
 	DBPath     string `yaml:"db_path"`
 	// ReadTimeout bounds how long a client may take to send its request body.
@@ -247,6 +249,7 @@ func (c *Config) applyDefaults() {
 	if c.Server.RawRetentionDays == 0 {
 		c.Server.RawRetentionDays = 30
 	}
+	c.Server.AdminToken = resolveSecret(c.Server.AdminToken)
 	if c.Server.AdminToken == "" {
 		c.Server.AdminToken = os.Getenv("LLMFAST_ADMIN_TOKEN")
 	}
@@ -258,9 +261,7 @@ func (c *Config) applyDefaults() {
 		if n.Weight <= 0 {
 			n.Weight = 1
 		}
-		if strings.HasPrefix(n.Token, "$") {
-			n.Token = os.Getenv(strings.TrimPrefix(n.Token, "$"))
-		}
+		n.Token = resolveSecret(n.Token)
 	}
 	for i := range c.Backends {
 		b := &c.Backends[i]
@@ -273,10 +274,7 @@ func (c *Config) applyDefaults() {
 		if b.Weight <= 0 {
 			b.Weight = 1
 		}
-		// Allow secrets to stay out of the YAML file.
-		if strings.HasPrefix(b.APIKey, "$") {
-			b.APIKey = os.Getenv(strings.TrimPrefix(b.APIKey, "$"))
-		}
+		b.APIKey = resolveSecret(b.APIKey)
 	}
 	for i := range c.Models {
 		m := &c.Models[i]
@@ -290,6 +288,23 @@ func (c *Config) applyDefaults() {
 			m.MaxOutputTokens = m.ContextLength
 		}
 	}
+}
+
+// resolveSecret expands a "$NAME" value from the environment, so credentials
+// can stay out of the config file.
+//
+// Every field that accepts a secret goes through this. Applying the convention
+// to only some of them is worse than not having it: a field that silently keeps
+// the literal string "$LLMFAST_ADMIN_TOKEN" as its value looks configured, and
+// the only symptom is a login that rejects the right password.
+func resolveSecret(v string) string {
+	if !strings.HasPrefix(v, "$") {
+		return v
+	}
+	name := strings.TrimPrefix(v, "$")
+	// Tolerate ${NAME} as well; people write it both ways.
+	name = strings.TrimPrefix(strings.TrimSuffix(name, "}"), "{")
+	return os.Getenv(name)
 }
 
 func (c *Config) Validate() error {

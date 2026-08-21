@@ -239,3 +239,57 @@ models: [{id: a/b, backends: [gpu-a], context_length: 100}]`
 		t.Errorf("a model routing to a node should validate: %v", err)
 	}
 }
+
+// TestSecretsResolveFromEnvironment covers every field that accepts a "$NAME"
+// value. Supporting the convention in some fields but not others is worse than
+// not supporting it at all: an unexpanded field looks configured, and the only
+// symptom is a credential that never matches.
+func TestSecretsResolveFromEnvironment(t *testing.T) {
+	t.Setenv("LLMFAST_ADMIN_TOKEN", "admin-secret")
+	t.Setenv("AGENT_TOKEN", "agent-secret")
+	t.Setenv("BACKEND_KEY", "backend-secret")
+
+	body := `
+provider: {slug: s}
+server:
+  admin_token: "$LLMFAST_ADMIN_TOKEN"
+nodes:
+  - name: gpu-a
+    url: "http://10.0.0.1:9900"
+    token: "${AGENT_TOKEN}"
+backends:
+  - name: b1
+    base_url: "http://x/v1"
+    api_key: "$BACKEND_KEY"
+models: [{id: a/b, backends: [b1], context_length: 100}]`
+
+	cfg, err := Load(write(t, body))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Server.AdminToken != "admin-secret" {
+		t.Errorf("admin_token = %q, want the expanded value", cfg.Server.AdminToken)
+	}
+	// ${NAME} braces are accepted too, because people write it both ways.
+	if cfg.Nodes[0].Token != "agent-secret" {
+		t.Errorf("node token = %q, want the expanded value", cfg.Nodes[0].Token)
+	}
+	if cfg.Backends[0].APIKey != "backend-secret" {
+		t.Errorf("backend api_key = %q, want the expanded value", cfg.Backends[0].APIKey)
+	}
+}
+
+// TestLiteralSecretsAreLeftAlone: a value that is not a $reference must survive
+// untouched, including one that merely contains a dollar sign.
+func TestLiteralSecretsAreLeftAlone(t *testing.T) {
+	for _, v := range []string{"plain-token", "abc$def", ""} {
+		if got := resolveSecret(v); got != v {
+			t.Errorf("resolveSecret(%q) = %q, want it unchanged", v, got)
+		}
+	}
+	// An unset variable resolves to empty rather than the literal reference,
+	// so a missing secret fails closed instead of becoming the password.
+	if got := resolveSecret("$DEFINITELY_NOT_SET_12345"); got != "" {
+		t.Errorf("unset variable gave %q, want empty", got)
+	}
+}
