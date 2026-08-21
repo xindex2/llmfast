@@ -61,12 +61,14 @@ fi
 
 cat <<NEXT
 
-Run the tunnel inside tmux, so closing this terminal — or pressing Ctrl-C by
-accident — does not take the API offline:
+Now restart everything so the tunnel comes up with the rest of the stack, as a
+detached process that a closed terminal cannot take down:
 
-  tmux new -s tunnel
-  cloudflared tunnel run $NAME
-  # Ctrl-b then d to detach, tmux attach -t tunnel to come back
+  bash /workspace/llmfast/scripts/llmfast.sh restart
+
+Then check it end to end, including the public hostname:
+
+  bash /workspace/llmfast/scripts/llmfast.sh status
 
 NEXT
 
