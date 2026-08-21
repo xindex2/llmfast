@@ -216,28 +216,52 @@ tell you rather than half-work.
 and restart the pod — RunPod only injects keys at start. Or skip SSH entirely
 and use the deploy key route below.
 
-<details>
+<details open>
 <summary>🖥️ No SSH? Pull from the pod instead with a deploy key</summary>
 
-This repository is private, so `git clone` from the pod gets a 404 — GitHub
-answers unauthenticated requests that way rather than 403. Give the pod
-read-only access:
+This repository is private, so `git clone` from the pod gets
+`Permission denied (publickey)` until the pod has a key GitHub recognises.
+**Do these in order — the clone is last.**
+
+**1.** Make a key on the pod:
 
 ```bash
-# 🖥️ on the pod, in the web terminal
+# 🖥️ ON THE POD
 ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519 -C "runpod"
+```
+
+**2.** Print it and copy the whole line, `ssh-ed25519` through `runpod`:
+
+```bash
+# 🖥️ ON THE POD
 cat ~/.ssh/id_ed25519.pub
 ```
 
-Copy that line, then open
-`github.com/xindex2/llmfast/settings/keys` → **Add deploy key**, paste it,
-**leave "Allow write access" unchecked**, save. Back on the pod:
+**3.** In a browser, open
+[github.com/xindex2/llmfast/settings/keys](https://github.com/xindex2/llmfast/settings/keys)
+→ **Add deploy key**. Title it `runpod`, paste the line into the Key box, and
+**leave "Allow write access" unchecked** — the pod only ever needs to read.
+Click **Add key**.
+
+**4.** Now the clone works:
 
 ```bash
-# 🖥️ on the pod
+# 🖥️ ON THE POD
 git clone git@github.com:xindex2/llmfast.git /workspace/llmfast
 bash /workspace/llmfast/scripts/setup-pod.sh
 ```
+
+If step 4 still says `Permission denied (publickey)`, the key did not land.
+Check what the pod is offering against what GitHub has:
+
+```bash
+# 🖥️ ON THE POD
+ssh -T git@github.com
+```
+
+A successful key prints `Hi xindex2/llmfast! You've successfully authenticated`.
+Anything else means the paste in step 3 was incomplete — it must be one single
+line with no wrapping.
 
 </details>
 
