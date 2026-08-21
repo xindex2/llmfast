@@ -299,45 +299,52 @@ The setup script prints the hardware it detected. It should say something like:
 cause is the driver rather than anything in this project. Run `nvidia-smi` on the
 pod to confirm.
 
-### 3. 🖥️ Start the agent
+### 3. 🖥️ Start everything
 
 ```bash
 # 🖥️ ON THE POD
-source /workspace/llmfast.env
-/workspace/llmfast/dist/llmfast-agent \
-  -listen 127.0.0.1:9900 -name gpu-a \
-  -state-dir /workspace/state -hf-cache /workspace/hf -mode native
+bash /workspace/llmfast/scripts/llmfast.sh start
 ```
 
-Leave it running. `-hf-cache /workspace/hf` puts model weights on the volume, so
-a restart does not re-download 20GB.
+That launches the agent, the gateway and the tunnel inside one tmux session and
+detaches. **You can close the terminal and the browser — they keep running.**
 
-### 4. 🖥️ Start the gateway
+The first run prints an API key. Save it; it is shown once and only its hash is
+stored.
 
-The dashboard listens on 8090 rather than 8081, because RunPod images run their
-own nginx on 8081. If you still see `admin UI unavailable ... address already in
-use`, something else holds the port — the inference API carries on regardless,
-only the dashboard is affected:
+Four commands are all you need afterwards:
 
-```bash
-# 🖥️ ON THE POD
-ss -tlnp | grep 8090          # what is holding it
-# then set a free port in server.admin_listen in /workspace/config.yaml
-# and restart the gateway
+| | |
+|---|---|
+| `llmfast.sh status` | what is running, and whether each part answers |
+| `llmfast.sh logs` | attach to the live output (`Ctrl-b` then `d` to leave) |
+| `llmfast.sh restart` | after a `git pull && make build` |
+| `llmfast.sh stop` | shut it all down |
+
+`status` is the one to reach for. It checks the agent, the gateway, the admin UI
+and your public hostname, and lists the installed models with their context
+lengths:
+
+```
+==> Processes
+  agent: running (1 pane)
+  gateway: running (1 pane)
+  tunnel: running (1 pane)
+
+==> Health
+  agent    :9900          ok
+  gateway  :8080          ok
+  admin    :8090          ok
+  public   api.llmfa.st   ok
+
+==> Models
+  qwen/qwen3.8-27b         ready=true  ctx=32,768
 ```
 
+**A pod restart stops everything** — tmux does not survive it. Run
+`llmfast.sh start` again and you are back.
 
-New terminal tab:
-
-```bash
-# 🖥️ ON THE POD
-source /workspace/llmfast.env
-cd /workspace && /workspace/llmfast/dist/llmfast -config /workspace/config.yaml
-```
-
-It prints an API key the first time it runs. Save that — it is shown once.
-
-### 5. 🖥️ Point api.llmfa.st at it
+### 4. 🖥️ Point api.llmfa.st at it
 
 ```bash
 # 🖥️ ON THE POD
@@ -351,14 +358,11 @@ DNS records for you. You add nothing by hand — look in Cloudflare afterwards a
 you will see proxied CNAMEs pointing at `<id>.cfargotunnel.com`. Leave them
 proxied; a tunnel only works that way.
 
-Now run it **inside tmux**, so closing the terminal or a stray Ctrl-C does not
-take your API offline:
+Then restart everything so the tunnel picks up the new config:
 
 ```bash
 # 🖥️ ON THE POD
-tmux new -s tunnel
-cloudflared tunnel run llmfast
-# Ctrl-b then d to detach. tmux attach -t tunnel to come back.
+bash /workspace/llmfast/scripts/llmfast.sh restart
 ```
 
 If you see **error 1033** when you visit the domain, the tunnel is not running.
@@ -369,7 +373,7 @@ Cloudflare will offer to "migrate" the tunnel to dashboard management. You do
 not need it, and it is irreversible — the config file above is easier to reason
 about and can live in version control.
 
-### 5b. 🔒 Put Cloudflare Access in front of admin.llmfa.st
+### 5. 🔒 Put Cloudflare Access in front of admin.llmfa.st
 
 **Do this before you open that hostname.** The dashboard exposes your API keys,
 your full request history, and the ability to install and stop models. The
@@ -450,44 +454,65 @@ In the admin UI:
 1. **Add Model** — paste `Qwen/Qwen3.8-27B`, press Inspect, read the plan, press
    Install on `gpu-a`. First install downloads ~20GB, so give it time. It is
    staged hidden until you publish it.
+
+   **Raise the context to 32768** before installing. The planner defaults to a
+   safe 16384 because KV cache is what actually limits you — on a 48GB A40 with
+   a 27B model you have about 25 GiB left for KV after the weights, and every
+   token of every in-flight request costs 128 KB of it. That is ~204k tokens
+   total to share out: 16384 gives you 12 concurrent requests, 32768 gives you
+   6. Six is the right trade here, because the apps routing to this class of
+   model are coding agents that send long prompts and would be truncated at 16k.
+
+   Do not chase the 1M context other providers advertise. The model's native
+   context is 262,144; 1M is RoPE scaling, and one such request alone would need
+   122 GiB of KV cache.
 2. **Benchmark** — once it reports ready, sweep `1, 4, 8, 16`. Note the
    concurrency where aggregate throughput stops climbing, and put that number in
    `max_concurrency` in `/workspace/config.yaml`.
 3. **Playground** — send it a few real prompts.
-4. Publish it, then follow
+4. **Earnings** — enter **26** as the input:output ratio, not the default. Real
+   traffic on these models runs about 26:1 (long prompts, short completions),
+   which is what makes the economics work: you bill for the prompt tokens too,
+   so a $335/mo A40 breaks even at roughly 8.6 output tok/s sustained rather
+   than the ~24 you would need at 5:1.
+5. Publish it, then follow
    [docs/openrouter-application.md](docs/openrouter-application.md).
 
-### Keeping it running
+### Running it day to day
 
-Pods restart. Use `tmux` so the three processes survive your terminal closing:
+Nothing needs to stay open on your laptop. The three processes live in a tmux
+session on the pod:
 
 ```bash
 # 🖥️ ON THE POD
-tmux new -s llmfast
-# start the agent, Ctrl-b c for a new window, start the gateway, again for the tunnel
-# Ctrl-b d to detach; tmux attach -t llmfast to come back
+bash /workspace/llmfast/scripts/llmfast.sh status    # is everything up?
+bash /workspace/llmfast/scripts/llmfast.sh logs      # watch it live
+bash /workspace/llmfast/scripts/llmfast.sh restart   # after an upgrade
 ```
 
-To send a new build later, run the same command again on your computer:
+Close the browser, shut the laptop, go to bed. The pod carries on.
+
+**After a pod restart**, tmux is gone with everything else, so run:
 
 ```bash
-# 💻 on your computer
-./scripts/deploy-to-pod.sh 69.30.85.5 22105
+# 🖥️ ON THE POD
+bash /workspace/llmfast/scripts/llmfast.sh start
 ```
 
-Then restart the three processes on the pod. If you used a deploy key instead:
+Your models, config, database and downloaded weights all live in `/workspace`,
+which survives, so nothing is reinstalled and nothing is re-downloaded.
+
+Worth checking `status` daily at first. Uptime is what decides how much traffic
+OpenRouter sends you, and a process that died quietly at 3am costs you a day of
+routing before you notice.
+
+To upgrade:
 
 ```bash
 # 🖥️ ON THE POD
 cd /workspace/llmfast && git pull && make build
+bash scripts/llmfast.sh restart
 ```
-
-If that says `go: not found`, the shell predates the Go install. Either open a
-new tab or run `export PATH=$PATH:/usr/local/go/bin` first — though the Makefile
-now looks in `/usr/local/go/bin` itself, so it should not come up.
-
-Your config and installed models live in `/workspace`, outside the repo, so a
-`git pull` never touches them.
 
 ### When to add a VPS
 
