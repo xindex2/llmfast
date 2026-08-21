@@ -314,16 +314,15 @@ a restart does not re-download 20GB.
 
 ### 4. 🖥️ Start the gateway
 
-If it logs `admin UI unavailable ... address already in use`, something else on
-the box holds that port. The inference API keeps running regardless — only the
-dashboard is affected. Find the occupant and either stop it or move the
-dashboard:
+The dashboard listens on 8090 rather than 8081, because RunPod images run their
+own nginx on 8081. If you still see `admin UI unavailable ... address already in
+use`, something else holds the port — the inference API carries on regardless,
+only the dashboard is affected:
 
 ```bash
 # 🖥️ ON THE POD
-ss -tlnp | grep 8081          # what is holding it
-# then edit /workspace/config.yaml, set admin_listen to a free port such as
-#   admin_listen: "127.0.0.1:8090"
+ss -tlnp | grep 8090          # what is holding it
+# then set a free port in server.admin_listen in /workspace/config.yaml
 # and restart the gateway
 ```
 
@@ -391,10 +390,10 @@ full request history. Reach it through a tunnel from your own machine:
 
 ```bash
 # 💻 ON YOUR COMPUTER
-ssh -N -L 8081:127.0.0.1:8081 root@69.30.85.5 -p 22105
+ssh -N -L 8090:127.0.0.1:8090 root@69.30.85.5 -p 22105
 ```
 
-Then open <http://localhost:8081>. Your token:
+Then open <http://localhost:8090>. Your token:
 
 ```bash
 # 🖥️ ON THE POD

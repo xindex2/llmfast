@@ -177,7 +177,9 @@ server:
   # Both listeners stay on localhost. The Cloudflare tunnel is what faces the
   # internet, so nothing here needs an open port.
   listen: "127.0.0.1:8080"
-  admin_listen: "127.0.0.1:8081"
+  # Not 8081: RunPod images run their own nginx there, and the clash is only
+  # visible as a bind error in the log.
+  admin_listen: "127.0.0.1:8090"
   admin_token: "$LLMFAST_ADMIN_TOKEN"
   db_path: "/workspace/llmfast.db"
   model_dir: "models.d"
