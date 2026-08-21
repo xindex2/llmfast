@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -154,8 +156,33 @@ func buildVLLM(s Spec, rt Runtime, port int) (string, []string, []string, error)
 	if rt.HFCacheDir != "" {
 		env = append(env, "HF_HOME="+rt.HFCacheDir)
 	}
+	// Some base images export HF_HUB_ENABLE_HF_TRANSFER=1 without the package
+	// that implements it, and any pip operation that removes hf_transfer
+	// leaves the variable behind. The download then aborts with "Fast download
+	// using 'hf_transfer' is enabled but 'hf_transfer' package is not
+	// available" -- and because config.json never arrives, the error the
+	// operator actually sees is the far less helpful "Can't load the
+	// configuration of <model>". Turning the accelerator off when it is not
+	// installed costs some download speed and nothing else.
+	if os.Getenv("HF_HUB_ENABLE_HF_TRANSFER") != "" && !hfTransferInstalled() {
+		env = append(env, "HF_HUB_ENABLE_HF_TRANSFER=0")
+	}
 	return "vllm", vllmArgs, env, nil
 }
+
+// hfTransferInstalled reports whether the accelerator the environment asks for
+// is actually importable. The answer cannot change while the agent runs, so it
+// is resolved once.
+var hfTransferInstalled = sync.OnceValue(func() bool {
+	ctx, cancel := execTimeout(20 * time.Second)
+	defer cancel()
+	for _, py := range []string{"python3", "python"} {
+		if err := exec.CommandContext(ctx, py, "-c", "import hf_transfer").Run(); err == nil {
+			return true
+		}
+	}
+	return false
+})
 
 func buildLlamaCpp(s Spec, rt Runtime, port int) (string, []string, []string, error) {
 	repo := s.GGUFRepo

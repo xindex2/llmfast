@@ -119,6 +119,10 @@ else
   # from a stuck process, and the temptation is to Ctrl-C a working install.
   pip install --upgrade pip
   pip install vllm
+  # Several base images export HF_HUB_ENABLE_HF_TRANSFER=1 without shipping the
+  # package, and the download then refuses to start. It is also genuinely
+  # faster on a 20GB checkpoint, so install it rather than turn it off.
+  pip install hf_transfer
   echo
   echo "installed: $(vllm --version 2>/dev/null | head -1)"
 fi

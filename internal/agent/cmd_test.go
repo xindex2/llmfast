@@ -107,3 +107,34 @@ func TestRootCausePrefersTheSpecificError(t *testing.T) {
 		t.Errorf("rootCause = %q, want empty when there is no error line", got)
 	}
 }
+
+// TestHFTransferIsDisabledWhenMissing covers an environment that asks for an
+// accelerator it does not have. RunPod images export
+// HF_HUB_ENABLE_HF_TRANSFER=1, and any pip operation that removes hf_transfer
+// leaves the variable set. The download then aborts before config.json is
+// fetched, so what the operator sees is "Can't load the configuration of
+// <model>" -- which reads like a wrong model id rather than a missing package.
+func TestHFTransferIsDisabledWhenMissing(t *testing.T) {
+	t.Setenv("HF_HUB_ENABLE_HF_TRANSFER", "1")
+
+	_, _, env, err := BuildCommand(Spec{
+		HFID: "Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8", ServedName: "qwen/coder",
+		Engine: "vllm", MaxModelLen: 32768, MaxNumSeqs: 8,
+	}, Runtime{Mode: "native"}, 18000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	joined := strings.Join(env, " ")
+	// Whichever way it resolves on this machine, the child must never be left
+	// asking for an accelerator that is not importable.
+	if hfTransferInstalled() {
+		if strings.Contains(joined, "HF_HUB_ENABLE_HF_TRANSFER=0") {
+			t.Error("hf_transfer is installed, so it should not be turned off")
+		}
+		return
+	}
+	if !strings.Contains(joined, "HF_HUB_ENABLE_HF_TRANSFER=0") {
+		t.Errorf("hf_transfer is not installed and the variable was left set: %v", env)
+	}
+}
