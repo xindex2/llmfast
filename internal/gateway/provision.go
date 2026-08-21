@@ -396,8 +396,17 @@ func normalizeQuant(q string) string {
 		return "int4"
 	case "q8_0", "int8":
 		return "int8"
+	case "nvfp4", "fp4", "mxfp4":
+		return "fp4"
 	case "bf16", "fp16", "float16", "bfloat16":
 		return "bf16"
+	case "fp32", "float32":
+		return "fp32"
+	case "compressed-tensors":
+		// The wrapper does not name the scheme inside it without reading the
+		// per-layer config, and guessing would publish a claim about our own
+		// serving precision that we cannot stand behind.
+		return "unknown"
 	}
 	return ""
 }
