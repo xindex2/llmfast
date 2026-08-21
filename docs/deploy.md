@@ -99,7 +99,7 @@ curl -N -w '\n' https://api.your-domain.com/v1/chat/completions \
 |---|---|
 | 443 | Public. Ideally restricted to OpenRouter's egress ranges — ask them |
 | 8080 | Localhost only; nginx proxies to it |
-| 8081 | **Localhost only.** Never expose the admin UI |
+| 8090 | Localhost. Expose it only behind an identity layer such as Cloudflare Access — the admin token alone has no second factor, no expiry and no audit trail |
 | 8000 (vLLM) | Private network only. vLLM has no authentication of its own |
 
 Reach the admin UI over an SSH tunnel:

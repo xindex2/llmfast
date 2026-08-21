@@ -1,0 +1,41 @@
+# Cloudflare Tunnel configuration for llmfast.
+#
+# Copy to /root/.cloudflared/config.yml on the pod and replace the tunnel id in
+# both places. Get it from `cloudflared tunnel list`.
+#
+# Two hostnames through one tunnel:
+#   api.llmfa.st    the inference API, public — this is what OpenRouter calls
+#   admin.llmfa.st  the dashboard, which MUST be put behind Cloudflare Access
+#
+# The admin hostname exposes API keys, your full request history, and the
+# ability to install and stop models. The gateway checks a bearer token, but a
+# token is a single secret with no second factor, no expiry and no audit trail.
+# Cloudflare Access adds identity in front of it: email code, Google, whatever
+# you configure. Set that policy up before you route the hostname.
+
+tunnel: REPLACE-WITH-TUNNEL-ID
+credentials-file: /root/.cloudflared/REPLACE-WITH-TUNNEL-ID.json
+
+# Keep the tunnel connected through brief network trouble rather than dropping
+# requests that are mid-stream.
+retries: 5
+grace-period: 30s
+
+ingress:
+  - hostname: api.llmfa.st
+    service: http://127.0.0.1:8080
+    originRequest:
+      # Generations run for minutes. A short timeout truncates them mid-stream,
+      # which OpenRouter scores as a failed request.
+      connectTimeout: 10s
+      # No read timeout: the origin is allowed to keep streaming for as long as
+      # the model keeps generating.
+      noTLSVerify: false
+
+  - hostname: admin.llmfa.st
+    service: http://127.0.0.1:8090
+    originRequest:
+      connectTimeout: 10s
+
+  # Anything else reaching this tunnel is not ours.
+  - service: http_status:404

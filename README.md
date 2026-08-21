@@ -339,23 +339,56 @@ It prints an API key the first time it runs. Save that — it is shown once.
 
 ### 5. 🖥️ Point api.llmfa.st at it
 
-New terminal tab:
-
 ```bash
 # 🖥️ ON THE POD
 cloudflared tunnel login          # opens a link; pick llmfa.st in the browser
 cloudflared tunnel create llmfast
-cloudflared tunnel route dns llmfast api.llmfa.st
-cloudflared tunnel --url http://127.0.0.1:8080 run llmfast
+bash /workspace/llmfast/scripts/setup-tunnel.sh llmfast api.llmfa.st admin.llmfa.st
 ```
 
-`route dns` **creates the Cloudflare DNS record for you**. You do not add
-anything by hand. Look in your Cloudflare dashboard afterwards and you will see
-a proxied CNAME for `api` pointing at `<something>.cfargotunnel.com`. That is
-correct — leave it proxied, a tunnel only works that way.
+That writes `/root/.cloudflared/config.yml` with both hostnames and creates the
+DNS records for you. You add nothing by hand — look in Cloudflare afterwards and
+you will see proxied CNAMEs pointing at `<id>.cfargotunnel.com`. Leave them
+proxied; a tunnel only works that way.
 
-`llmfa.st` itself stays exactly as it is on Netlify. You are only adding the
-`api` subdomain.
+Now run it **inside tmux**, so closing the terminal or a stray Ctrl-C does not
+take your API offline:
+
+```bash
+# 🖥️ ON THE POD
+tmux new -s tunnel
+cloudflared tunnel run llmfast
+# Ctrl-b then d to detach. tmux attach -t tunnel to come back.
+```
+
+If you see **error 1033** when you visit the domain, the tunnel is not running.
+That is the whole meaning of 1033: Cloudflare has the DNS record but nothing is
+connected behind it.
+
+Cloudflare will offer to "migrate" the tunnel to dashboard management. You do
+not need it, and it is irreversible — the config file above is easier to reason
+about and can live in version control.
+
+### 5b. 🔒 Put Cloudflare Access in front of admin.llmfa.st
+
+**Do this before you open that hostname.** The dashboard exposes your API keys,
+your full request history, and the ability to install and stop models. The
+gateway does check a bearer token, but a token is one secret with no second
+factor, no expiry and no audit trail. Access adds a real login in front of it,
+and it is free.
+
+1. Cloudflare dashboard → **Zero Trust** → **Access** → **Applications**
+2. **Add an application** → **Self-hosted**
+3. Subdomain `admin`, domain `llmfa.st`
+4. Add a policy: action **Allow**, include **Emails** → your address
+5. Save
+
+You will get a one-time code by email the first time you visit. Until that
+policy exists, treat `admin.llmfa.st` as public.
+
+> **Not** `api.llmfa.st`. That one has to stay open — OpenRouter's monitor polls
+> `/v1/models` without credentials, and their traffic cannot pass through a login
+> page. The API is protected by its own bearer keys instead.
 
 ### 6. 💻 Check that it actually streams
 
@@ -385,15 +418,25 @@ terminate TLS there instead — see [deploy/nginx.conf](deploy/nginx.conf).
 
 ### 7. 💻 Open the admin UI
 
-The admin listener stays on localhost deliberately: it exposes API keys and your
-full request history. Reach it through a tunnel from your own machine:
+If you set up Access in step 5b, just open <https://admin.llmfa.st> and sign in
+with the email code.
+
+<details>
+<summary>Or reach it over SSH instead, without exposing a hostname at all</summary>
 
 ```bash
 # 💻 ON YOUR COMPUTER
 ssh -N -L 8090:127.0.0.1:8090 root@69.30.85.5 -p 22105
 ```
 
-Then open <http://localhost:8090>. Your token:
+Then <http://localhost:8090>. RunPod pods have no root password — access is by
+SSH key only, and the key has to be in your RunPod account settings *before* the
+pod starts. If SSH is not set up, use the Access route above; it is easier and
+gives you an audit trail.
+
+</details>
+
+Either way, your token:
 
 ```bash
 # 🖥️ ON THE POD
