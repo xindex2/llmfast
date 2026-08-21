@@ -314,6 +314,20 @@ a restart does not re-download 20GB.
 
 ### 4. 🖥️ Start the gateway
 
+If it logs `admin UI unavailable ... address already in use`, something else on
+the box holds that port. The inference API keeps running regardless — only the
+dashboard is affected. Find the occupant and either stop it or move the
+dashboard:
+
+```bash
+# 🖥️ ON THE POD
+ss -tlnp | grep 8081          # what is holding it
+# then edit /workspace/config.yaml, set admin_listen to a free port such as
+#   admin_listen: "127.0.0.1:8090"
+# and restart the gateway
+```
+
+
 New terminal tab:
 
 ```bash

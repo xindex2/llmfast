@@ -86,18 +86,24 @@ func main() {
 		IdleTimeout: 120 * time.Second,
 	}
 
-	errCh := make(chan error, 2)
+	// Only the public listener is fatal. The admin UI failing to bind is
+	// annoying; taking the inference API down with it would turn a port clash
+	// into an outage, and OpenRouter scores those against us. So the admin
+	// error is reported loudly and the gateway keeps serving traffic.
+	errCh := make(chan error, 1)
 	go func() {
 		log.Info("public API listening", "addr", cfg.Server.Listen,
 			"models", len(cfg.Models), "backends", len(cfg.Backends))
 		if err := public.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("public listener: %w", err)
+			errCh <- fmt.Errorf("public listener on %s: %w", cfg.Server.Listen, err)
 		}
 	}()
 	go func() {
 		log.Info("admin UI listening", "addr", cfg.Server.AdminListen)
 		if err := admin.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("admin listener: %w", err)
+			log.Error("admin UI unavailable; the inference API is unaffected",
+				"addr", cfg.Server.AdminListen, "err", err,
+				"fix", "change server.admin_listen in your config to a free port, then restart")
 		}
 	}()
 
