@@ -1042,3 +1042,88 @@ func TestQuantizationTradeoffIsSurfaced(t *testing.T) {
 		t.Errorf("a 3.3x throughput difference should be surfaced: %v", p.Warnings)
 	}
 }
+
+// TestCompressedTensorsReportsItsRealWidth covers a checkpoint format that
+// hides its own size. "compressed-tensors" is a container, not a format: the
+// same quant_method covers 4-bit int, 8-bit int and fp8, and the width lives
+// inside config_groups. Reading only quant_method sized a 4-bit 27B model at
+// 51.7 GiB instead of 15.5 GiB and refused to run it on a card with 29 GiB to
+// spare.
+func TestCompressedTensorsReportsItsRealWidth(t *testing.T) {
+	cases := []struct {
+		name string
+		bits int
+		kind string
+		want string
+	}{
+		{"4-bit integer", 4, "int", "awq"},
+		{"4-bit float", 4, "float", "nvfp4"},
+		{"8-bit integer", 8, "int", "int8"},
+		{"8-bit float", 8, "float", "fp8"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := &quantConfig{QuantMethod: "compressed-tensors"}
+			q.ConfigGroups = map[string]struct {
+				Weights *struct {
+					NumBits int    `json:"num_bits"`
+					Type    string `json:"type"`
+				} `json:"weights"`
+			}{"group_0": {Weights: &struct {
+				NumBits int    `json:"num_bits"`
+				Type    string `json:"type"`
+			}{NumBits: c.bits, Type: c.kind}}}
+
+			if got := q.scheme(); got != c.want {
+				t.Errorf("scheme = %q, want %q", got, c.want)
+			}
+		})
+	}
+
+	// A block with nothing legible inside must not claim a width it did not
+	// read: reporting the wrapper makes the planner size it conservatively.
+	empty := &quantConfig{QuantMethod: "compressed-tensors"}
+	if got := empty.scheme(); got != "compressed-tensors" {
+		t.Errorf("an unreadable block returned %q; it should stay conservative", got)
+	}
+
+	// And the plain methods still pass through untouched.
+	for method, want := range map[string]string{"fp8": "fp8", "awq": "awq", "gptq": "gptq"} {
+		if got := (&quantConfig{QuantMethod: method}).scheme(); got != want {
+			t.Errorf("scheme(%q) = %q, want %q", method, got, want)
+		}
+	}
+
+	// The size that failure was really about.
+	info := qwen32B()
+	info.Params = 27_800_000_000
+	info.PublishedQuant = "awq"
+	p := PlanFor(info, gpuNode("NVIDIA A40", 45, 1), 32768)
+	if !p.Fits {
+		t.Errorf("a 4-bit 27B must fit a 45 GiB A40: %v", p.Blockers)
+	}
+}
+
+// TestExplicitContextIsNotOverridden: the planner trims the default context
+// until eight requests fit, which is right for a default and wrong for a
+// number the operator typed. A coding agent truncated at 8k loses the request;
+// low concurrency only queues it.
+func TestExplicitContextIsNotOverridden(t *testing.T) {
+	info := qwen32BFP8()
+	info.Params = 27_800_000_000
+	info.MaxPositions = 262144
+	node := gpuNode("NVIDIA A40", 45, 1)
+	node.RAMBytes = 46 << 30
+
+	if got := PlanFor(info, node, 0).MaxModelLen; got >= 262144 {
+		t.Errorf("the default context was left at %d; it should be trimmed for concurrency", got)
+	}
+	p := PlanFor(info, node, 32768)
+	if p.MaxModelLen != 32768 {
+		t.Errorf("asked for 32768, planned %d", p.MaxModelLen)
+	}
+	// And it must say what that costs rather than silently accepting it.
+	if !strings.Contains(strings.Join(p.Warnings, " "), "concurrent request") {
+		t.Errorf("expected a warning about the concurrency cost: %v", p.Warnings)
+	}
+}

@@ -124,7 +124,7 @@ func quantBytes(q string) float64 {
 		return 4.0
 	case "bf16", "fp16", "float16", "bfloat16":
 		return bytesBF16
-	case "fp8":
+	case "fp8", "int8":
 		return bytesFP8
 	case "awq", "gptq", "int4", "nvfp4", "fp4":
 		return bytesINT4
@@ -761,6 +761,9 @@ func canRunQuant(a arch, quant string) (bool, string) {
 			return true, ""
 		}
 		return false, "AWQ and GPTQ kernels need Turing or newer"
+	case "int8":
+		// W8A8 int8 runs on anything with dp4a, which is every card here.
+		return true, ""
 	case "nvfp4":
 		if a.nvfp4 {
 			return true, ""

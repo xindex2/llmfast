@@ -101,9 +101,7 @@ type hfConfig struct {
 	KVLoRARank int `json:"kv_lora_rank"`
 	// QuantizationConfig is present when the published checkpoint is already
 	// quantized, which changes both the download size and the usable formats.
-	QuantizationConfig *struct {
-		QuantMethod string `json:"quant_method"`
-	} `json:"quantization_config"`
+	QuantizationConfig *quantConfig `json:"quantization_config"`
 
 	// Multimodal models nest the language model's geometry one level down and
 	// leave the top level holding only the wrapper. The key name varies by
@@ -216,7 +214,7 @@ func (c *Client) Fetch(ctx context.Context, id string) (*Info, error) {
 	info.IsMoE = cfg.routedExperts() > 0
 	info.IsMLA = cfg.QLoRARank > 0 || cfg.KVLoRARank > 0
 	if cfg.QuantizationConfig != nil {
-		info.PublishedQuant = strings.ToLower(cfg.QuantizationConfig.QuantMethod)
+		info.PublishedQuant = cfg.QuantizationConfig.scheme()
 	}
 
 	if meta.Safetensors != nil {
@@ -546,4 +544,56 @@ func quantVariantOf(candidate, model string) (string, bool) {
 		return "", false
 	}
 	return quant, true
+}
+
+// quantConfig is the quantization block from a checkpoint's config.json.
+type quantConfig struct {
+	QuantMethod string `json:"quant_method"`
+	// Bits is how AWQ and GPTQ record their width, directly on the block.
+	Bits int `json:"bits"`
+	// ConfigGroups is how compressed-tensors records it: per-target groups,
+	// each naming a bit width and whether it is integer or float.
+	ConfigGroups map[string]struct {
+		Weights *struct {
+			NumBits int    `json:"num_bits"`
+			Type    string `json:"type"`
+		} `json:"weights"`
+	} `json:"config_groups"`
+}
+
+// scheme reduces a quantization block to the vocabulary the planner sizes and
+// selects kernels with.
+//
+// "compressed-tensors" is a container rather than a format: the same
+// quant_method covers 4-bit integer, 8-bit integer and fp8 checkpoints, and
+// the width only appears inside config_groups. Treating the wrapper as a
+// format meant a 4-bit 27B model was sized at 51.7 GiB instead of 15.5 GiB and
+// declared not to fit on a card with room to spare.
+func (q *quantConfig) scheme() string {
+	method := strings.ToLower(q.QuantMethod)
+	if method != "compressed-tensors" && method != "compressed_tensors" {
+		if q.Bits == 8 && (method == "awq" || method == "gptq") {
+			return "int8"
+		}
+		return method
+	}
+	for _, g := range q.ConfigGroups {
+		if g.Weights == nil || g.Weights.NumBits == 0 {
+			continue
+		}
+		isFloat := strings.EqualFold(g.Weights.Type, "float")
+		switch {
+		case g.Weights.NumBits <= 4 && isFloat:
+			return "nvfp4"
+		case g.Weights.NumBits <= 4:
+			return "awq"
+		case g.Weights.NumBits == 8 && isFloat:
+			return "fp8"
+		case g.Weights.NumBits == 8:
+			return "int8"
+		}
+	}
+	// Nothing legible inside. Report the wrapper, which the planner sizes
+	// conservatively rather than optimistically.
+	return "compressed-tensors"
 }
