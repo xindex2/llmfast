@@ -12,10 +12,24 @@ style.css     shared styles
 
 ## Before you publish
 
-The legal pages are **drafts**. Every field highlighted in yellow is a
-placeholder that must be replaced, and both pages carry a banner saying so.
+The legal pages are **drafts**. Everything the domain settles is already filled
+in — contact addresses, notice periods, currency. What is still highlighted in
+yellow is what only you can supply:
+
+| Field | Where |
+|---|---|
+| Company legal name, number, registered address | both pages |
+| Jurisdiction and venue | terms §25, privacy §1 |
+| Effective date | both, at the top |
+| Retention choice | terms §9, privacy §3 — keep exactly one |
+| Serving region and sub-processors | privacy §8, §9 |
+| Website analytics, if any | privacy §6 |
+
 Search for `class="fill"` to find them all, then delete the `.draft-banner`
 blocks once a lawyer has reviewed the result.
+
+Company details are deliberately left blank rather than guessed. A fabricated
+legal entity in a Terms of Use is worse than an obvious gap.
 
 The two things most likely to get you in trouble:
 
@@ -60,11 +74,17 @@ search engine crawlers hit.
 
 ## Keeping it honest
 
-Two things on the home page are hard-coded and will drift:
+The home page deliberately carries **no prices and no model version numbers**.
+Both drift the moment you change `config/config.yaml`, and a marketing page that
+disagrees with your own API is worse than one that says less. The model cards
+name families only, and everything specific points at
+`api.llmfa.st/v1/models`, which is generated from your config and is always
+right.
 
-- **The models table** duplicates prices from `config/config.yaml`. The live
-  source is always `api.llmfa.st/v1/models`, which the page links to. Update the
-  table whenever you change pricing, or delete it and link out instead.
-- **The claims in "Why it's quick"** describe what the gateway actually does
-  today: prefix caching, 429 instead of queueing, unbuffered SSE. If you change
-  that behaviour, change the copy.
+The one thing that can still drift is **the claims in "Why it's quick"** —
+prefix caching, 429 instead of queueing, unbuffered SSE. Those describe what the
+gateway actually does today. If you change that behaviour, change the copy.
+
+The model card marks are drawn by us rather than taken from the labs' logos.
+Naming a model you serve is ordinary descriptive use; reproducing someone's
+trademark on your own marketing implies an endorsement you do not have.

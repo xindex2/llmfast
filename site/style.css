@@ -221,3 +221,67 @@ footer.site a { color: var(--ink-soft); }
     color: var(--muted); padding-top: 2px;
   }
 }
+
+/* ---------- hero ---------- */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+  gap: 40px; align-items: center;
+  padding: 22px 0 34px;
+}
+.hero-copy h1 { margin-top: 0; }
+.hero-art svg { width: 100%; height: auto; display: block; overflow: visible; }
+
+/* Tokens leave one after another rather than all at once — the animation is
+   the point, so it is staggered rather than simultaneous. */
+.tok {
+  fill: var(--pen);
+  opacity: 0;
+  animation: tokenOut 2.6s ease-out infinite;
+  animation-delay: calc(var(--i) * 0.28s);
+}
+@keyframes tokenOut {
+  0%   { opacity: 0; transform: translateX(-14px); }
+  12%  { opacity: .95; transform: translateX(0); }
+  55%  { opacity: .5; transform: translateX(16px); }
+  100% { opacity: 0; transform: translateX(34px); }
+}
+/* Respect a reader who has asked for less motion; the drawing still reads. */
+@media (prefers-reduced-motion: reduce) {
+  .tok { animation: none; opacity: .8; }
+}
+
+@media (max-width: 860px) {
+  .hero { grid-template-columns: 1fr; gap: 18px; }
+  .hero-art { max-width: 420px; margin: 0 auto; }
+}
+
+/* ---------- model cards ---------- */
+/* Two columns, so four models sit as a balanced 2x2 rather than leaving one
+   orphaned on a second row. */
+.modelgrid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px; margin-top: 22px;
+}
+.modelcard {
+  display: flex; gap: 14px; align-items: center;
+  padding: 16px 18px; border-radius: 14px; text-decoration: none;
+  color: var(--ink); background: #fff;
+  /* A slightly uneven radius keeps the card from reading as a plain rectangle
+     next to the hand-drawn work above it. */
+  border: 2px solid var(--ink);
+  border-radius: 16px 20px 15px 22px;
+  box-shadow: 3px 3px 0 rgba(28,27,25,.12);
+  transition: transform .09s ease, box-shadow .09s ease;
+}
+.modelcard:hover { transform: translate(-1px,-1px); box-shadow: 5px 5px 0 rgba(28,27,25,.16); }
+.modelcard .mark { flex: none; width: 40px; height: 40px; }
+.modelcard .mark svg { width: 100%; height: 100%; display: block; }
+.modelcard .body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.modelcard strong { font-size: 16px; letter-spacing: -.01em; }
+.modelcard em { font-style: normal; font-size: 12.5px; color: var(--muted); }
+.modelcard .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.modelcard .tags i {
+  font-style: normal; font-size: 11px; padding: 2px 7px; border-radius: 999px;
+  background: var(--paper-2); color: var(--ink-soft);
+}

@@ -27,16 +27,22 @@
   <p class="updated">Last updated: <span class="fill">[EFFECTIVE DATE]</span></p>
 
   <div class="draft-banner">
-    <strong>This is a draft, not legal advice.</strong> Replace every
-    <span class="fill">marked field</span> and have a lawyer review it. If you
-    serve anyone in the EU or UK, GDPR applies and you will need a lawful basis,
-    a data processing agreement for business customers, a record of processing,
-    and possibly an EU representative. Most importantly:
-    <strong>everything this page claims about retention must match what your
+    <strong>This is a draft, not legal advice.</strong> The domain and contact
+    addresses are filled in. What remains is what only you can supply: your
+    <span class="fill">[COMPANY LEGAL NAME]</span>,
+    <span class="fill">[REGISTERED ADDRESS]</span> and
+    <span class="fill">[JURISDICTION]</span>; the
+    <span class="fill">[EFFECTIVE DATE]</span>; where you actually serve
+    inference from; your sub-processors; and the retention choice in section 3.
+    <br><br>
+    <strong>Everything this page claims about retention must match what your
     software actually does.</strong> The gateway's <code>raw_retention_days</code>
     setting and the <code>compliance.zdr</code> flags you publish to OpenRouter
     are the ground truth. If they disagree with this page, this page is a
-    misrepresentation. Delete this banner once reviewed.
+    misrepresentation. If you serve anyone in the EU or UK, GDPR applies and you
+    will need a lawful basis, a data processing agreement for business
+    customers, a record of processing, and possibly an EU representative.
+    Delete this banner once a lawyer has reviewed it.
   </div>
 
   <nav class="toc" aria-label="Contents">
@@ -68,7 +74,7 @@
   </p>
   <p>
     For anything about privacy, write to
-    <span class="fill">[privacy@llmfa.st]</span>.
+    privacy@llmfa.st.
     <span class="fill">[If GDPR applies and you have appointed a Data Protection
     Officer or an EU/UK representative, name them here.]</span>
   </p>
@@ -147,7 +153,7 @@
     </tbody>
   </table>
   <p style="margin-top:16px">
-    Per-request metadata is kept for <span class="fill">[30]</span> days and then
+    Per-request metadata is kept for 30 days and then
     deleted. Aggregated statistics that cannot be traced to an individual request
     are kept indefinitely for capacity planning.
   </p>
@@ -159,7 +165,7 @@
     <span class="fill">[PAYMENT PROCESSOR]</span>, and never reaches our servers.
     We keep billing records for as long as tax and accounting law in
     <span class="fill">[JURISDICTION]</span> requires, typically
-    <span class="fill">[7]</span> years.
+    7 years.
   </p>
   <p>
     API keys are stored only as a SHA-256 hash. We cannot display a key again
@@ -175,7 +181,7 @@
   </p>
   <p>
     Our web server keeps standard access logs — IP address, timestamp, requested
-    path, user agent — for <span class="fill">[14]</span> days for security and
+    path, user agent — for 14 days for security and
     abuse prevention.
   </p>
 
@@ -239,11 +245,11 @@
     <thead><tr><th>Data</th><th>Kept for</th></tr></thead>
     <tbody>
       <tr><td class="name">Prompts and completions</td><td><span class="fill">[Not retained — or N hours]</span></td></tr>
-      <tr><td class="name">Per-request metadata</td><td><span class="fill">[30]</span> days</td></tr>
+      <tr><td class="name">Per-request metadata</td><td>30 days</td></tr>
       <tr><td class="name">Aggregated statistics</td><td>Indefinitely (not linkable to a request)</td></tr>
-      <tr><td class="name">Account data</td><td>Life of the account, then <span class="fill">[90]</span> days</td></tr>
-      <tr><td class="name">Billing records</td><td><span class="fill">[7]</span> years (legal requirement)</td></tr>
-      <tr><td class="name">Web server access logs</td><td><span class="fill">[14]</span> days</td></tr>
+      <tr><td class="name">Account data</td><td>Life of the account, then 90 days</td></tr>
+      <tr><td class="name">Billing records</td><td>7 years (legal requirement)</td></tr>
+      <tr><td class="name">Web server access logs</td><td>14 days</td></tr>
     </tbody>
   </table>
 
@@ -261,8 +267,8 @@
     not a refusal.
   </p>
   <p>
-    Write to <span class="fill">[privacy@llmfa.st]</span>. We respond within
-    <span class="fill">[30]</span> days.
+    Write to privacy@llmfa.st. We respond within
+    30 days.
   </p>
 
   <h2 id="children">14. Children</h2>
@@ -276,14 +282,14 @@
   <p>
     We will post changes here with a new date. Where a change materially affects
     how we handle prompt content, we will email active customers at least
-    <span class="fill">[30]</span> days before it takes effect.
+    30 days before it takes effect.
   </p>
 
   <h2 id="contact">16. Contact</h2>
   <p>
     <span class="fill">[COMPANY LEGAL NAME]</span><br>
     <span class="fill">[REGISTERED ADDRESS]</span><br>
-    <span class="fill">[privacy@llmfa.st]</span>
+    privacy@llmfa.st
   </p>
 
   <footer class="site">

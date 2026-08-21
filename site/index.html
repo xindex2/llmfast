@@ -36,18 +36,89 @@
   </header>
 
   <!-- ================= hero ================= -->
-  <section style="padding-top:22px">
-    <h1>
-      Fast, cheap inference<br>
-      for <span class="underlined">open models<svg viewBox="0 0 220 12" preserveAspectRatio="none" aria-hidden="true"><path d="M2 8 C 45 3, 92 10, 138 5 C 168 2, 196 7, 218 4" class="sketch-stroke pen" stroke-width="2.6"/><path d="M6 11 C 50 7, 96 12, 140 8.5" class="sketch-stroke pen thin" stroke-width="1.8"/></svg></span>.
-    </h1>
-    <p class="lede">
-      We run Qwen, DeepSeek, GLM and Kimi on our own GPUs and hand you back
-      tokens the moment they exist. One OpenAI-compatible API. No queue.
-    </p>
-    <div class="cta">
-      <a class="btn" href="#start">Get started</a>
-      <a class="btn ghost" href="#models">See the models</a>
+  <section class="hero">
+    <div class="hero-copy">
+      <h1>
+        Fast, cheap inference<br>
+        for <span class="underlined">open models<svg viewBox="0 0 220 12" preserveAspectRatio="none" aria-hidden="true"><path d="M2 8 C 45 3, 92 10, 138 5 C 168 2, 196 7, 218 4" class="sketch-stroke pen" stroke-width="2.6"/><path d="M6 11 C 50 7, 96 12, 140 8.5" class="sketch-stroke pen thin" stroke-width="1.8"/></svg></span>.
+      </h1>
+      <p class="lede">
+        We run Qwen, DeepSeek, GLM and Kimi on our own GPUs and hand you back
+        tokens the moment they exist. One OpenAI-compatible API. No queue.
+      </p>
+      <div class="cta">
+        <a class="btn" href="#start">Get started</a>
+        <a class="btn ghost" href="#models">See the models</a>
+      </div>
+    </div>
+
+    <!-- The promise, drawn: a prompt goes in, tokens leave immediately and keep
+         coming. Nothing accumulates anywhere. -->
+    <div class="hero-art">
+      <svg viewBox="0 0 420 330" role="img"
+           aria-label="A prompt enters a GPU and tokens stream out one after another without waiting.">
+
+        <!-- prompt, arriving -->
+        <path d="M14 44 C 44 41, 78 47, 106 43 C 109 58, 105 74, 108 88
+                 C 78 92, 44 86, 16 90 C 12 75, 17 59, 14 44 Z"
+              fill="#fff" opacity=".6"/>
+        <path d="M14 44 C 44 41, 78 47, 106 43 C 109 58, 105 74, 108 88
+                 C 78 92, 44 86, 16 90 C 12 75, 17 59, 14 44 Z"
+              class="sketch-stroke"/>
+        <text x="61" y="71" class="dg-sub" text-anchor="middle">your prompt</text>
+
+        <path d="M114 67 C 136 64, 158 71, 178 67" class="sketch-stroke pen"/>
+        <path d="M168 60 L 180 67 L 168 74" class="sketch-stroke pen"/>
+
+        <!-- the chip: drawn twice, slightly offset, so the outline looks inked -->
+        <path d="M188 40 C 232 36, 284 44, 328 38 C 332 76, 326 122, 330 158
+                 C 284 163, 232 155, 190 160 C 186 122, 192 76, 188 40 Z"
+              fill="#fff8e2" opacity=".95"/>
+        <path d="M188 40 C 232 36, 284 44, 328 38 C 332 76, 326 122, 330 158
+                 C 284 163, 232 155, 190 160 C 186 122, 192 76, 188 40 Z"
+              class="sketch-stroke" stroke-width="2.6"/>
+        <path d="M193 45 C 236 41, 286 49, 326 43 C 329 78, 324 118, 327 153"
+              class="sketch-stroke thin"/>
+        <!-- inner die -->
+        <path d="M214 66 C 246 63, 276 69, 304 65 C 307 86, 303 112, 306 132
+                 C 276 136, 246 130, 216 134 C 212 112, 217 86, 214 66 Z"
+              class="sketch-stroke thin" stroke-width="1.8"/>
+        <text x="259" y="106" class="dg-title" text-anchor="middle">GPU</text>
+        <!-- pins -->
+        <path d="M188 60 L 174 59 M188 82 L 174 81 M188 104 L 174 103 M188 126 L 174 125"
+              class="sketch-stroke thin"/>
+        <path d="M330 58 L 344 57 M330 80 L 344 79 M330 102 L 344 101 M330 124 L 344 123"
+              class="sketch-stroke thin"/>
+
+        <!-- speed lines: it is already working -->
+        <path d="M150 24 C 168 21, 186 26, 202 22" class="sketch-stroke pen thin"/>
+        <path d="M164 14 C 180 11, 196 16, 210 12" class="sketch-stroke pen thin"/>
+
+        <!-- tokens leaving, one after another, fading as they go -->
+        <g class="tokens">
+          <rect x="348" y="70" width="26" height="13" rx="6" class="tok" style="--i:0"/>
+          <rect x="348" y="92" width="34" height="13" rx="6" class="tok" style="--i:1"/>
+          <rect x="348" y="114" width="22" height="13" rx="6" class="tok" style="--i:2"/>
+          <rect x="348" y="136" width="30" height="13" rx="6" class="tok" style="--i:3"/>
+        </g>
+        <text x="366" y="176" class="dg-sub" text-anchor="middle">tokens</text>
+
+        <!-- stopwatch, annotating the thing that actually matters -->
+        <circle cx="96" cy="238" r="34" fill="#fff" opacity=".6"/>
+        <path d="M96 204 C 115 205, 130 220, 130 238 C 130 257, 114 271, 96 272
+                 C 77 271, 62 256, 62 238 C 62 219, 78 204, 96 204 Z"
+              class="sketch-stroke"/>
+        <path d="M99 207 C 116 209, 128 222, 128 238" class="sketch-stroke thin"/>
+        <path d="M88 200 L 104 200" class="sketch-stroke"/>
+        <path d="M96 238 L 96 219" class="sketch-stroke pen" stroke-width="2.4"/>
+        <path d="M96 238 L 110 245" class="sketch-stroke pen" stroke-width="2.4"/>
+
+        <path d="M134 234 C 156 228, 180 232, 200 226" class="sketch-stroke pen thin"/>
+        <text x="206" y="224" class="dg-hand">first token, straight away</text>
+        <text x="206" y="248" class="dg-hand" style="font-size:16px; fill:var(--muted)">
+          nothing waits in a queue
+        </text>
+      </svg>
     </div>
   </section>
 
@@ -168,40 +239,85 @@
   <!-- ================= models ================= -->
   <section id="models">
     <h2>Models</h2>
-    <p class="muted" style="max-width:52ch">
-      Open weights, run on our own metal. Prices are per million tokens.
-      <!-- REPLACE: keep this table in sync with config/config.yaml. -->
+    <p class="muted" style="max-width:54ch">
+      Open weights, run on our own metal. Every model keeps the licence its
+      authors published it under.
     </p>
-    <table class="models">
-      <thead>
-        <tr><th>Model</th><th>Context</th><th>Input</th><th>Output</th><th>Cached input</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="name">Qwen3 32B</td>
-          <td class="ctx">131k</td><td class="price">$0.09</td>
-          <td class="price">$0.28</td><td class="price">$0.02</td>
-        </tr>
-        <tr>
-          <td class="name">GLM 4.6</td>
-          <td class="ctx">200k</td><td class="price">$0.38</td>
-          <td class="price">$1.50</td><td class="price">$0.06</td>
-        </tr>
-        <tr>
-          <td class="name">DeepSeek V3</td>
-          <td class="ctx">164k</td><td class="price">$0.22</td>
-          <td class="price">$0.80</td><td class="price">$0.04</td>
-        </tr>
-        <tr>
-          <td class="name">Kimi K2</td>
-          <td class="ctx">131k</td><td class="price">$0.48</td>
-          <td class="price">$2.30</td><td class="price">$0.08</td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="small muted" style="margin-top:16px">
-      The live list, with capabilities and current pricing, is always at
+
+    <div class="modelgrid">
+      <!-- Each card carries a hand-drawn mark rather than the maker's logo:
+           the marks are ours, so nothing here implies endorsement by or
+           affiliation with the labs whose models we serve. -->
+      <a class="modelcard" href="https://api.llmfa.st/v1/models">
+        <span class="mark">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M20 5 C 29 6, 35 13, 35 21 C 35 30, 28 35, 20 35
+                     C 11 35, 5 29, 5 21 C 5 12, 12 5, 20 5 Z" class="sketch-stroke"/>
+            <path d="M13 22 C 17 15, 23 15, 27 22 M13 22 L 20 30 L 27 22" class="sketch-stroke thin"/>
+          </svg>
+        </span>
+        <span class="body">
+          <strong>Qwen3</strong>
+          <em>Alibaba</em>
+          <span class="tags"><i>text</i><i>vision</i><i>tools</i></span>
+        </span>
+      </a>
+
+      <a class="modelcard" href="https://api.llmfa.st/v1/models">
+        <span class="mark">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M7 12 C 16 9, 26 13, 34 10 C 33 20, 34 28, 33 32
+                     C 24 34, 14 31, 6 33 C 8 25, 6 19, 7 12 Z" class="sketch-stroke"/>
+            <path d="M13 20 C 19 18, 26 21, 30 19" class="sketch-stroke thin"/>
+            <path d="M13 26 C 18 24, 24 27, 28 25" class="sketch-stroke thin"/>
+          </svg>
+        </span>
+        <span class="body">
+          <strong>DeepSeek</strong>
+          <em>DeepSeek AI</em>
+          <span class="tags"><i>text</i><i>reasoning</i><i>tools</i></span>
+        </span>
+      </a>
+
+      <a class="modelcard" href="https://api.llmfa.st/v1/models">
+        <span class="mark">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M20 6 L 33 13 C 33 22, 28 31, 20 35 C 12 31, 7 22, 7 13 Z"
+                  class="sketch-stroke"/>
+            <path d="M14 19 L 19 25 L 27 15" class="sketch-stroke thin"/>
+          </svg>
+        </span>
+        <span class="body">
+          <strong>GLM</strong>
+          <em>Z.ai</em>
+          <span class="tags"><i>text</i><i>reasoning</i><i>tools</i></span>
+        </span>
+      </a>
+
+      <a class="modelcard" href="https://api.llmfa.st/v1/models">
+        <span class="mark">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M28 7 C 20 8, 13 15, 13 23 C 13 30, 19 34, 26 34
+                     C 18 31, 15 26, 16 20 C 17 13, 22 9, 28 7 Z" class="sketch-stroke"/>
+            <path d="M30 14 L 32 18 L 36 19 L 33 22 L 34 26 L 30 24 L 26 26 L 27 22 L 24 19 L 28 18 Z"
+                  class="sketch-stroke thin"/>
+          </svg>
+        </span>
+        <span class="body">
+          <strong>Kimi</strong>
+          <em>Moonshot AI</em>
+          <span class="tags"><i>text</i><i>long context</i><i>tools</i></span>
+        </span>
+      </a>
+    </div>
+
+    <p class="small muted" style="margin-top:20px">
+      The exact models we serve, their context windows, capabilities and current
+      pricing are always at
       <a href="https://api.llmfa.st/v1/models"><code>api.llmfa.st/v1/models</code></a>.
+      That endpoint is the source of truth; nothing on this page is.
+      You can also compare us against every other provider on
+      <a href="https://openrouter.ai">OpenRouter</a>.
     </p>
   </section>
 
