@@ -108,9 +108,32 @@ say "vLLM"
 if command -v vllm >/dev/null 2>&1; then
   echo "already installed: $(vllm --version 2>/dev/null | head -1)"
 else
-  pip install -q --upgrade pip
-  pip install -q vllm
+  echo "This pulls PyTorch and the CUDA runtime — several gigabytes, usually"
+  echo "five to fifteen minutes. Progress is shown so a slow link does not look"
+  echo "like a hang."
+  echo
+  # Deliberately not quiet. A silent multi-gigabyte download is indistinguishable
+  # from a stuck process, and the temptation is to Ctrl-C a working install.
+  pip install --upgrade pip
+  pip install vllm
+  echo
   echo "installed: $(vllm --version 2>/dev/null | head -1)"
+fi
+
+# RunPod images ship their own PyTorch. If vLLM replaced it with a build for a
+# different CUDA version, the engine fails at model load with an error that does
+# not mention the cause, so it is worth catching here.
+if python3 -c "import torch" 2>/dev/null; then
+  TORCH_CUDA=$(python3 -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo unknown)
+  TORCH_OK=$(python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo False)
+  echo "torch: $(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null), CUDA $TORCH_CUDA, sees GPU: $TORCH_OK"
+  if [ "$TORCH_OK" != "True" ]; then
+    echo
+    echo "  WARNING: torch cannot see the GPU. vLLM will fail to start."
+    echo "  Usually this means the vLLM install replaced torch with a build for a"
+    echo "  different CUDA version. Check 'nvidia-smi' works, then reinstall torch"
+    echo "  matching the driver's CUDA version before going further."
+  fi
 fi
 
 say "cloudflared"
