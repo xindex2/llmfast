@@ -240,15 +240,21 @@ status() {
     if echo "$loc" | grep -q 'cloudflareaccess.com'; then
       ok "$admin_host is behind Cloudflare Access"
     else
-      bad "$admin_host is PUBLIC -- Cloudflare Access is not in front of it"
+      bad "$admin_host is PUBLIC -- nothing is checking identity in front of it"
       echo "      Anyone who finds this hostname reaches your admin login, and only"
       echo "      a bearer token stands between them and your API keys, your request"
       echo "      history, and the ability to stop your models."
       echo
-      echo "      Fix it now: one-dash.cloudflareaccess.com -> Access -> Applications"
-      echo "      -> Add self-hosted -> $admin_host -> policy: Emails = your address."
-      echo "      Until then, reach the admin UI over SSH instead:"
-      echo "        ssh -L 8090:127.0.0.1:8090 root@<pod> -p <port>   then http://localhost:8090"
+      echo "      Simplest fix -- stop publishing it, and use SSH instead:"
+      echo "        bash $REPO/scripts/setup-tunnel.sh ${TUNNEL} $(grep -m1 -A1 'ingress:' /root/.cloudflared/config.yml 2>/dev/null | grep hostname | awk '{print $3}')"
+      echo "        bash $REPO/scripts/llmfast.sh restart"
+      echo "      then from your own machine:"
+      echo "        ssh -L 8090:127.0.0.1:8090 root@<pod-ip> -p <pod-port>"
+      echo "        and open http://localhost:8090"
+      echo
+      echo "      Or keep the hostname and put Cloudflare Access in front of it."
+      echo "      If its one-time-PIN emails never arrive, add Google as an identity"
+      echo "      provider instead: Access -> Settings -> Authentication -> Add new."
     fi
   fi
 

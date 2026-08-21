@@ -390,26 +390,53 @@ Cloudflare will offer to "migrate" the tunnel to dashboard management. You do
 not need it, and it is irreversible — the config file above is easier to reason
 about and can live in version control.
 
-### 5. 🔒 Put Cloudflare Access in front of admin.llmfa.st
+### 5. 🔒 Decide how you reach the admin UI
 
-**Do this before you open that hostname.** The dashboard exposes your API keys,
-your full request history, and the ability to install and stop models. The
-gateway does check a bearer token, but a token is one secret with no second
-factor, no expiry and no audit trail. Access adds a real login in front of it,
-and it is free.
+The dashboard exposes your API keys, your full request history, and the ability
+to install and stop models. The gateway checks a bearer token, but a token is
+one secret with no second factor, no expiry and no audit trail. So it needs
+either identity in front of it or no public hostname at all.
 
-1. Cloudflare dashboard → **Zero Trust** → **Access** → **Applications**
-2. **Add an application** → **Self-hosted**
-3. Subdomain `admin`, domain `llmfa.st`
-4. Add a policy: action **Allow**, include **Emails** → your address
-5. Save
+Two ways. Pick one — **do not publish `admin.llmfa.st` with neither.**
 
-You will get a one-time code by email the first time you visit. Until that
-policy exists, treat `admin.llmfa.st` as public.
+**Option A — do not publish it (recommended).** Put only the API on the tunnel
+and reach the dashboard over SSH:
 
-> **Not** `api.llmfa.st`. That one has to stay open — OpenRouter's monitor polls
-> `/v1/models` without credentials, and their traffic cannot pass through a login
-> page. The API is protected by its own bearer keys instead.
+```bash
+# 🖥️ ON THE POD  — note: no admin hostname argument
+bash /workspace/llmfast/scripts/setup-tunnel.sh llmfast api.llmfa.st
+bash /workspace/llmfast/scripts/llmfast.sh restart
+```
+
+```bash
+# 💻 ON YOUR COMPUTER  — leave this running while you use the dashboard
+ssh -L 8090:127.0.0.1:8090 root@<pod-ip> -p <pod-port>
+```
+
+Then open `http://localhost:8090`. Nothing about the admin UI is reachable from
+the internet, there is no second login to configure, and no third party sits in
+front of your dashboard. The cost is that you need SSH open to use it.
+
+**Option B — publish it behind Cloudflare Access.** Worth it if you want the
+dashboard from a phone or a machine without your SSH key. At
+`<team>.cloudflareaccess.com` → **Access** → **Applications** → **Add a
+self-hosted application** → domain `admin.llmfa.st` → add a policy.
+
+The default policy sends a one-time PIN by email, and those mails are slow and
+land in spam often enough to be genuinely annoying. Add a real identity
+provider instead: **Settings → Authentication → Add new → Google**, then set
+the policy to *Emails* = your address. That gives you the ordinary Google login
+you already have, with no code to wait for.
+
+`status` tells you which situation you are in every time it runs, so this
+cannot quietly regress:
+
+```
+==> Admin exposure
+  ✗ admin.llmfa.st is PUBLIC -- Cloudflare Access is not in front of it
+```
+
+`api.llmfa.st` stays public either way. That one is meant to be.
 
 ### 6. 💻 Check that it actually streams
 
