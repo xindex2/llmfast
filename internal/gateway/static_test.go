@@ -51,12 +51,8 @@ func TestStaticAssetsRevalidate(t *testing.T) {
 		t.Errorf("served %q, want the new content", rec.Body.String())
 	}
 
-	// "/" is index.html and needs the same treatment.
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Header().Get("ETag") == "" {
-		t.Error("/ has no ETag, so the shell page can go stale too")
-	}
+	// "/" is the shell, which gets something stronger than an ETag; see
+	// TestShellIsNeverCached.
 }
 
 // TestLoginLimiterBoundsGuessing: the sign-in endpoint is reachable from the

@@ -379,6 +379,17 @@ func staticHandler(root fs.FS) http.Handler {
 		if p == "/" {
 			p = "/index.html"
 		}
+		if p == "/index.html" {
+			// The shell is a couple of kilobytes and it is what pulls in every
+			// other asset, so it is never cached at all. An ETag would be
+			// enough in theory, but a copy cached before ETags existed keeps
+			// its own heuristic freshness and cannot be invalidated from here
+			// -- which left operators running a UI several builds old with no
+			// sign of it.
+			w.Header().Set("Cache-Control", "no-store, must-revalidate")
+			files.ServeHTTP(w, r)
+			return
+		}
 		if tag, ok := etags[p]; ok {
 			w.Header().Set("ETag", tag)
 			w.Header().Set("Cache-Control", "no-cache")

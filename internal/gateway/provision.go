@@ -210,6 +210,26 @@ func (s *Server) adminInstall(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
+	// Whether the engine can take a flag is a property of the model, not a
+	// preference the browser gets to express. Reading it from the checkpoint
+	// here rather than trusting the request means a stale admin page -- one
+	// cached before these fields existed -- cannot launch an engine with flags
+	// that make it exit, which is exactly what happened: the plan card showed
+	// the model was hybrid while the install it produced still asked for
+	// prefix caching.
+	if info, err := s.hf.Fetch(ctx, req.HFID); err == nil {
+		req.Hybrid = info.IsHybrid
+		req.QuantFromCkpt = info.PublishedQuant != ""
+		if info.IsHybrid {
+			// Neither has an implementation over a recurrent state, and vLLM
+			// rejects both at startup rather than ignoring them.
+			req.KVCacheDType = "auto"
+		}
+	} else {
+		s.log.Warn("could not re-read model config before install; "+
+			"relying on the values the admin page sent", "model", req.HFID, "err", err)
+	}
+
 	// Start the engine first. If the node rejects it there is nothing to undo,
 	// whereas writing the catalog entry first would advertise a model that does
 	// not exist and earn us 404s, which count against our uptime.
