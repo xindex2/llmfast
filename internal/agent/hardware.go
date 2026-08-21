@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -37,6 +38,11 @@ func DetectHardware(name, dataDir string, bandwidthOverride float64) modelspec.N
 	}
 	if n.MemBandwidthGBs <= 0 {
 		n.MemBandwidthGBs = estimateBandwidth(n.CPUModel, n.CPUCores)
+	}
+	// Only meaningful with a GPU present, and importing torch costs seconds.
+	if len(n.GPUs) > 0 {
+		n.DriverCUDA = detectDriverCUDA()
+		n.TorchCUDA = detectTorchCUDA()
 	}
 	return n
 }
@@ -254,4 +260,45 @@ func estimateBandwidth(cpuModel string, cores int) float64 {
 		return 80
 	}
 	return 40
+}
+
+// detectDriverCUDA reads the highest CUDA version this host's driver supports.
+//
+// nvidia-smi prints it in its header banner rather than exposing it as a
+// --query-gpu field, so the banner is what gets parsed.
+func detectDriverCUDA() string {
+	ctx, cancel := execTimeout(5 * time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "nvidia-smi").Output()
+	if err != nil {
+		return ""
+	}
+	m := cudaBanner.FindSubmatch(out)
+	if m == nil {
+		return ""
+	}
+	return string(m[1])
+}
+
+var cudaBanner = regexp.MustCompile(`CUDA Version:\s*([0-9]+\.[0-9]+)`)
+
+// detectTorchCUDA reports the CUDA version the installed PyTorch was compiled
+// against, which is what actually has to be no newer than the driver.
+//
+// Importing torch is slow -- several seconds -- so this runs once when the
+// agent starts its hardware scan, not per install.
+func detectTorchCUDA() string {
+	ctx, cancel := execTimeout(60 * time.Second)
+	defer cancel()
+	for _, py := range []string{"python3", "python"} {
+		out, err := exec.CommandContext(ctx, py, "-c",
+			"import torch,sys; sys.stdout.write(torch.version.cuda or \"\")").Output()
+		if err != nil {
+			continue
+		}
+		if v := strings.TrimSpace(string(out)); v != "" {
+			return v
+		}
+	}
+	return ""
 }

@@ -3,6 +3,7 @@ package modelspec
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -55,6 +56,47 @@ type Node struct {
 	// VRAM figure is only half the story: a 1/2 slice also has roughly half the
 	// compute, so throughput scales down with it. 0 or 1 means a whole GPU.
 	GPUFraction float64 `json:"gpu_fraction,omitempty"`
+	// DriverCUDA is the highest CUDA version this host's NVIDIA driver
+	// supports, and TorchCUDA is the version the installed PyTorch was built
+	// against. A driver older than the build is a hard stop: the engine exits
+	// at startup with "The NVIDIA driver on your system is too old", and
+	// nothing about the model or its size has anything to do with it. In a
+	// container the driver comes from the host and cannot be upgraded from
+	// inside, so this is worth knowing before an install rather than after
+	// five restarts.
+	DriverCUDA string `json:"driver_cuda,omitempty"`
+	TorchCUDA  string `json:"torch_cuda,omitempty"`
+}
+
+// cudaOlderThan reports whether version a is lower than version b, comparing
+// major then minor. Unparseable input reports false, so an unknown version
+// never manufactures a blocker.
+func cudaOlderThan(a, b string) bool {
+	amaj, amin, aok := parseCUDA(a)
+	bmaj, bmin, bok := parseCUDA(b)
+	if !aok || !bok {
+		return false
+	}
+	if amaj != bmaj {
+		return amaj < bmaj
+	}
+	return amin < bmin
+}
+
+func parseCUDA(v string) (major, minor int, ok bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, 0, false
+	}
+	parts := strings.SplitN(v, ".", 3)
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	if len(parts) > 1 {
+		minor, _ = strconv.Atoi(parts[1])
+	}
+	return major, minor, true
 }
 
 // gpuShare returns the fraction of each GPU available, defaulting to a whole one.
@@ -190,6 +232,20 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 	tp := largestValidTP(nGPU, kvHeadsForTP)
 	a := nodeArch(node)
 	p.TensorParallel = tp
+
+	// Nothing below matters if the engine cannot start at all.
+	if cudaOlderThan(node.DriverCUDA, node.TorchCUDA) {
+		p.Blockers = append(p.Blockers, fmt.Sprintf(
+			"this host's NVIDIA driver supports CUDA %s but the installed PyTorch was built "+
+				"for CUDA %s, so any engine exits at startup with \"the NVIDIA driver on your "+
+				"system is too old\". The driver belongs to the host and cannot be upgraded "+
+				"from inside a container: either reinstall vLLM against CUDA %s, or move to a "+
+				"host with a newer driver",
+			node.DriverCUDA, node.TorchCUDA, node.DriverCUDA))
+		p.MaxNumSeqs, p.MaxModelLen, p.KVBudgetBytes, p.DiskBytes = 0, 0, 0, 0
+		p.Fits, p.Viable = false, false
+		return p
+	}
 
 	// The checkpoint decides the format. If it was published quantized, that is
 	// what runs -- there is no choice to make and no ladder to walk. If it was

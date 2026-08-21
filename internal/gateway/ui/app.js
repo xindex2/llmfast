@@ -583,6 +583,10 @@ function hardwareLine(hw) {
   }
   parts.push(`${hw.cpu_cores} cores`, gib(hw.ram_bytes) + ' RAM', gib(hw.disk_free_bytes) + ' free');
   if (!hw.has_nvme) parts.push('no NVMe');
+  // The pairing that decides whether any engine can start at all.
+  if (hw.driver_cuda && hw.torch_cuda) {
+    parts.push(`CUDA ${hw.driver_cuda} driver / ${hw.torch_cuda} torch`);
+  }
   return parts.join(' · ');
 }
 

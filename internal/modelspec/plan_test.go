@@ -1127,3 +1127,61 @@ func TestExplicitContextIsNotOverridden(t *testing.T) {
 		t.Errorf("expected a warning about the concurrency cost: %v", p.Warnings)
 	}
 }
+
+// TestDriverTooOldIsABlockerNotACrashLoop covers a failure that has nothing to
+// do with the model: a container whose host driver supports CUDA 12.8 running
+// a PyTorch built for CUDA 13. Every engine exits at startup with "the NVIDIA
+// driver on your system is too old", and because the driver belongs to the
+// host it cannot be fixed from inside. Left undetected this presented as five
+// restart attempts and a traceback whose last line named a re-raise.
+func TestDriverTooOldIsABlockerNotACrashLoop(t *testing.T) {
+	node := gpuNode("NVIDIA A40", 45, 1)
+	node.DriverCUDA, node.TorchCUDA = "12.8", "13.0"
+
+	p := PlanFor(qwen32BFP8(), node, 32768)
+	if p.Fits || p.Viable {
+		t.Error("no plan can run when the engine cannot start")
+	}
+	joined := strings.Join(p.Blockers, " ")
+	if !strings.Contains(joined, "12.8") || !strings.Contains(joined, "13.0") {
+		t.Errorf("the blocker should name both versions: %v", p.Blockers)
+	}
+	// Capacity figures next to a blocker read as though something could run.
+	if p.MaxNumSeqs != 0 || p.MaxModelLen != 0 {
+		t.Errorf("capacity should be zeroed, got seqs=%d ctx=%d", p.MaxNumSeqs, p.MaxModelLen)
+	}
+
+	// A driver newer than the build is the normal, working case.
+	ok := gpuNode("NVIDIA A40", 45, 1)
+	ok.DriverCUDA, ok.TorchCUDA = "13.0", "12.8"
+	if q := PlanFor(qwen32BFP8(), ok, 32768); !q.Fits {
+		t.Errorf("a newer driver must not block: %v", q.Blockers)
+	}
+
+	// And an unknown version must never manufacture a blocker.
+	unknown := gpuNode("NVIDIA A40", 45, 1)
+	if q := PlanFor(qwen32BFP8(), unknown, 32768); !q.Fits {
+		t.Errorf("unknown CUDA versions must not block: %v", q.Blockers)
+	}
+}
+
+func TestCUDAVersionComparison(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"12.8", "13.0", true},
+		{"12.8", "12.9", true},
+		{"13.0", "12.8", false},
+		{"12.8", "12.8", false},
+		{"12.8", "", false},
+		{"", "13.0", false},
+		{"garbage", "13.0", false},
+		{"12", "13", true},
+	}
+	for _, c := range cases {
+		if got := cudaOlderThan(c.a, c.b); got != c.want {
+			t.Errorf("cudaOlderThan(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
