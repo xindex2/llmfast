@@ -52,6 +52,10 @@ that should reach them.
 
 ---
 
+> **On RunPod specifically**, `scripts/setup-pod.sh` does steps 2 and 3 for you:
+> it installs Go, vLLM and cloudflared, builds the binaries, generates tokens
+> and writes a config. See the README for the exact sequence.
+
 ## Step 2 — Install the agent on the GPU box
 
 ```bash

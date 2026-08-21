@@ -58,6 +58,11 @@ sudo journalctl -u llmfast | grep sk-llmfast-
 
 ## 3. TLS and reverse proxy
 
+> If the gateway runs on a RunPod pod there is no stable IP to point DNS at, so
+> none of this applies — use a Cloudflare Tunnel instead. The README has the
+> steps. What follows is for a gateway on a host with its own address.
+
+
 **This is where provider latency usually dies.** nginx buffers proxied responses
 by default, which batches SSE frames and turns a smooth token stream into
 periodic bursts. It does not break anything visibly — it just makes your
