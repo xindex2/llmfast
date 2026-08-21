@@ -78,7 +78,7 @@ everywhere — fix the driver before continuing.
 
 ```bash
 /workspace/llmfast/llmfast-agent \
-  -listen 0.0.0.0:9900 \
+  -listen 127.0.0.1:9900 \
   -name gpu-a \
   -state-dir /workspace/llmfast/state \
   -hf-cache /workspace/hf \
@@ -92,19 +92,23 @@ re-download.
 
 ## Step 3 — Run the gateway
 
-The gateway is light: it used under 1% CPU at 880 req/s in benchmarking. Put it
-on a small VM **in the same region as the GPU** — every millisecond between them
-lands inside your TTFT, which is the number you are competing on.
+**On the same pod.** The gateway is a single Go binary that used under 1% CPU at
+880 req/s; it does not need its own machine, and running it beside the engine
+removes every millisecond of network between them. That time lands inside your
+TTFT, which is the number you are competing on.
+
+Add a separate VM (~$5/month, same region) only once you have more than one GPU
+node, or if you recreate pods often enough that a changing address is a problem.
 
 ```yaml
-# config/config.yaml
+# /workspace/config.yaml
 provider:
   slug: llmfast
   display_name: LLMFast
   public_url: https://api.llmfa.st
 
 server:
-  listen: ":8080"
+  listen: "127.0.0.1:8080"     # the tunnel or proxy is what faces the internet
   admin_listen: "127.0.0.1:8081"     # never expose this
   admin_token: "$LLMFAST_ADMIN_TOKEN"
   db_path: "/var/lib/llmfast/llmfast.db"
@@ -112,7 +116,7 @@ server:
 
 nodes:
   - name: gpu-a
-    url: http://POD_IP:9900
+    url: http://127.0.0.1:9900   # same box, so localhost
     token: $LLMFAST_AGENT_TOKEN
     max_concurrency: 13              # set from the benchmark in step 5
 ```
@@ -218,14 +222,14 @@ A new provider does not start busy. Plan for the first month to lose money.
 ```bash
 curl -s https://api.llmfa.st/v1/models | jq '.data[0].schema_version'   # "2.4"
 
-curl -N https://api.llmfa.st/v1/chat/completions \
-  -H "Authorization: Bearer sk-llmfast-..." \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"qwen/qwen3.8-27b","messages":[{"role":"user","content":"hi"}],"stream":true}'
+./scripts/check-streaming.sh https://api.llmfa.st sk-llmfast-... qwen/qwen3.8-27b
 ```
 
-Frames must arrive spread over time. If they all land at once, something is
-buffering — see the nginx settings in [deploy.md](deploy.md).
+The script reports the spread between the first and last frame. If everything
+arrives at once, something is buffering — most often Cloudflare's proxy on the
+API subdomain, or a reverse proxy missing `proxy_buffering off`. This matters
+more than it sounds: a buffering proxy does not fail visibly, it just makes your
+measured throughput worse than the hardware you are paying for.
 
 4. Create a key named `openrouter` in the admin UI.
 5. Submit the form using [openrouter-application.md](openrouter-application.md).

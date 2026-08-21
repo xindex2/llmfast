@@ -180,103 +180,209 @@ Set `is_ready: false` to stage a model that OpenRouter should keep hidden.
 Starting vLLM with `--served-model-name` equal to the public id lets the gateway
 skip rewriting the model name in every response frame.
 
-## Deploying for real
+## What runs where
 
-Full walkthrough in **[docs/launch.md](docs/launch.md)**. The short version:
+Three things exist. Only one of them needs a server you pay for.
 
-### 1. GPU node (RunPod)
+```
+  llmfa.st                      api.llmfa.st
+  the website                   the inference API
+       │                              │
+       ▼                              ▼
+  ┌──────────────┐          ┌────────────────────────────────┐
+  │  Cloudflare  │          │  ONE machine with a GPU        │
+  │    Pages     │          │                                │
+  │   (free)     │          │   llmfast      the gateway     │
+  │              │          │   llmfast-agent  supervises    │
+  │  static HTML │          │   vLLM           the model     │
+  └──────────────┘          └────────────────────────────────┘
+     site/                          RunPod pod
+```
 
-Deploy a pod, attach a volume of at least 60GB, and run the agent on it:
+**The website does not need a VPS.** `site/` is three static HTML files.
+Cloudflare Pages hosts it free, and you already use Cloudflare.
+
+**The gateway does not need its own VPS either — put it on the GPU pod.** It is
+a single Go binary that used under 1% CPU at 880 requests/second. Running it
+beside the engine also removes every millisecond of network between them, and
+that time lands inside your TTFT, which is the number OpenRouter scores you on.
+
+So the minimum is: **Cloudflare Pages (free) + one RunPod pod.** No VPS.
+
+### When you do want a separate VPS
+
+Add a small always-on box (~$5/month) when either becomes true:
+
+- **You have more than one GPU node.** The gateway routes across them, so it
+  should not live inside any one of them.
+- **You destroy and recreate pods often.** A pod's address changes when it is
+  recreated; a VPS keeps `api.llmfa.st` pointing somewhere stable.
+
+Put it in the same region as the GPU. A €5 VM next to your GPU beats a €50 one
+in another country for this workload.
+
+---
+
+## Deploying
+
+Full walkthrough with the measurement steps: **[docs/launch.md](docs/launch.md)**.
+
+### 1. The website
 
 ```bash
-export LLMFAST_AGENT_TOKEN=$(openssl rand -hex 32)   # give this to the gateway
+npx wrangler pages deploy site --project-name llmfast
+```
+
+That is the whole deployment. Point `llmfa.st` at it in the Cloudflare
+dashboard. Proxy (orange cloud) is fine here — it is static content.
+
+Before publishing, read [site/README.md](site/README.md): the Terms and Privacy
+pages are drafts with placeholders that must be filled in.
+
+### 2. The GPU pod
+
+Deploy a pod and attach a volume of at least 60GB mounted at `/workspace`.
+Weights live there; without it every restart re-downloads them, and that is
+downtime you are scored on.
+
+```bash
+# On the pod
+export LLMFAST_AGENT_TOKEN=$(openssl rand -hex 32)   # the gateway needs this
 export HF_TOKEN=hf_...                               # only for gated repos
 
-./llmfast-agent -hardware -state-dir /workspace/state   # check it sees the GPU
+./llmfast-agent -hardware -state-dir /workspace/state    # confirm it sees the GPU
 
-./llmfast-agent \
-  -listen 0.0.0.0:9900 \
-  -name gpu-a \
-  -state-dir /workspace/state \
-  -hf-cache /workspace/hf \
-  -mode docker
+./llmfast-agent -listen 127.0.0.1:9900 -name gpu-a \
+  -state-dir /workspace/state -hf-cache /workspace/hf -mode docker &
 ```
 
-Put `-hf-cache` on the volume. Without it every restart re-downloads the weights,
-and that is downtime OpenRouter scores you on.
+Bind the agent to `127.0.0.1` when the gateway is on the same box. Nothing
+external should reach it.
 
-### 2. Gateway
+### 3. The gateway, on the same pod
 
-Runs on a small VM **in the same region as the GPU** — every millisecond between
-them lands inside your TTFT.
-
-```bash
-sudo useradd --system --no-create-home llmfast
-sudo mkdir -p /opt/llmfast /etc/llmfast /var/lib/llmfast
-sudo chown llmfast:llmfast /var/lib/llmfast
-
-sudo install -m 0755 dist/llmfast-linux-amd64 /opt/llmfast/llmfast
-sudo install -m 0640 config/config.yaml /etc/llmfast/config.yaml
-sudo sh -c 'echo "LLMFAST_ADMIN_TOKEN=$(openssl rand -hex 32)" > /etc/llmfast/env'
-sudo sh -c 'echo "LLMFAST_AGENT_TOKEN=<from step 1>" >> /etc/llmfast/env'
-sudo chmod 0600 /etc/llmfast/env
-
-sudo install -m 0644 deploy/llmfast.service /etc/systemd/system/
-sudo systemctl enable --now llmfast
+```yaml
+# /workspace/config.yaml
+provider: {slug: llmfast, display_name: LLMFast, public_url: https://api.llmfa.st}
+server:
+  listen: "127.0.0.1:8080"
+  admin_listen: "127.0.0.1:8081"
+  admin_token: "$LLMFAST_ADMIN_TOKEN"
+  db_path: "/workspace/llmfast.db"
+  model_dir: "models.d"
+nodes:
+  - name: gpu-a
+    url: http://127.0.0.1:9900
+    token: $LLMFAST_AGENT_TOKEN
+    max_concurrency: 13        # set this from the Benchmark tab
 ```
 
-### 3. Domain and TLS
+```bash
+export LLMFAST_ADMIN_TOKEN=$(openssl rand -hex 32)
+./llmfast -config /workspace/config.yaml
+```
 
-Point DNS at the gateway:
+Both listeners are on localhost. Step 4 is what puts the API on the internet.
 
-| Record | Name | Value |
-|---|---|---|
-| A | `api.llmfa.st` | gateway public IP |
-| A | `llmfa.st` | static host for [site/](site/) |
+### 4. Getting api.llmfa.st to the pod
 
-Then issue a certificate. Caddy is the least error-prone option because it also
-gets the streaming settings right by default:
+A RunPod pod has no stable public address — it changes when the pod is
+recreated. **Cloudflare Tunnel** solves this without a public IP, an open port
+or a certificate to renew, and you already use Cloudflare:
 
 ```bash
-sudo apt install caddy
-sudo tee /etc/caddy/Caddyfile <<'EOF'
+# On the pod
+cloudflared tunnel login
+cloudflared tunnel create llmfast
+cloudflared tunnel route dns llmfast api.llmfa.st
+
+cat > ~/.cloudflared/config.yml <<'YAML'
+tunnel: llmfast
+credentials-file: /root/.cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: api.llmfa.st
+    service: http://127.0.0.1:8080
+    originRequest:
+      # Streaming responses must not be accumulated before forwarding.
+      disableChunkedEncoding: false
+      connectTimeout: 10s
+  - service: http_status:404
+YAML
+
+cloudflared tunnel run llmfast
+```
+
+The tunnel reconnects itself when the pod restarts, and `api.llmfa.st` keeps
+working.
+
+> **Verify streaming before you apply to OpenRouter.** Cloudflare's proxy can
+> buffer, and on the Free and Pro plans a request that produces nothing for 100
+> seconds is cut off with a 524. Run the check below against your live domain.
+> If it reports buffering, either set the API subdomain to DNS-only (grey cloud)
+> and terminate TLS yourself, or move the gateway to a VPS.
+
+```bash
+./scripts/check-streaming.sh https://api.llmfa.st sk-llmfast-... qwen/qwen3.8-27b
+```
+
+```
+  frames:            51
+  first frame at:    0.03s
+  last frame at:     1.52s
+  spread:            1.49s
+
+  STREAMING. Frames arrived spread over time, which is what you want.
+```
+
+A buffering proxy does not fail visibly — the answer is correct, the tokens
+just all arrive at the end. The only symptom is throughput worse than your
+hardware, which is a bad way to find out.
+
+### Alternative: your own TLS instead of a tunnel
+
+If the gateway is on a VPS with a stable IP, terminate TLS yourself. **nginx is
+fine** — [deploy/nginx.conf](deploy/nginx.conf) is ready to use and the settings
+that matter are:
+
+```nginx
+proxy_buffering off;           # do not accumulate the response
+proxy_request_buffering off;
+proxy_read_timeout 600s;       # generations run for minutes
+proxy_http_version 1.1;
+proxy_set_header Connection "";
+```
+
+Caddy does the same in one line, which is the only reason it appears in these
+docs first:
+
+```
 api.llmfa.st {
     reverse_proxy 127.0.0.1:8080 {
-        flush_interval -1     # stream immediately, never buffer
-        transport http {
-            read_timeout 600s
-        }
+        flush_interval -1
+        transport http { read_timeout 600s }
     }
 }
-EOF
-sudo systemctl reload caddy
 ```
 
-`flush_interval -1` is the important line. With nginx use
-`proxy_buffering off` — see [deploy.md](docs/deploy.md). A buffering proxy does
-not break anything visibly; it just makes your measured throughput worse than
-the hardware you are paying for.
+Use whichever you already know. Run the check script either way.
 
-Verify from outside your network that frames arrive spread over time:
+### 5. Firewall
 
-```bash
-curl -N https://api.llmfa.st/v1/chat/completions \
-  -H "Authorization: Bearer sk-llmfast-..." \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"qwen/qwen3.8-27b","messages":[{"role":"user","content":"hi"}],"stream":true}'
-```
-
-### 4. Firewall
-
-| Port | Who reaches it |
+| Port | Who should reach it |
 |---|---|
-| 443 | public — ideally restricted to OpenRouter's egress ranges |
-| 8080 | localhost only; the proxy forwards to it |
-| 8081 | **localhost only** — admin UI exposes keys and request history |
-| 9900 | the gateway only — the agent's control API |
+| 443 | public — the tunnel or your proxy |
+| 8080 | localhost only |
+| 8081 | **localhost only** — the admin UI exposes API keys and request history |
+| 9900 | localhost, or the gateway only if it is on another box |
 | 18000+ | the gateway only — engines have no authentication of their own |
 
-Reach the admin UI over a tunnel: `ssh -L 8081:127.0.0.1:8081 gateway-host`
+Reach the admin UI over a tunnel, never by opening the port:
+
+```bash
+ssh -L 8081:127.0.0.1:8081 your-pod
+```
+
+---
 
 ## Documentation
 
