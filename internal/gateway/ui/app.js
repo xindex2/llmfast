@@ -367,12 +367,13 @@ async function renderModels() {
   const rows = d.models || [];
   main().innerHTML = `<h2>Model catalog <span class="muted">(${rows.length})</span></h2>
     <p class="muted" style="margin-top:-8px;margin-bottom:14px">
-      Edit <code>config/config.yaml</code> and restart to change this. Prices are USD per token.</p>
+      Publishing a model is what makes it visible to OpenRouter. Keep it hidden until you have
+      benchmarked it — routing traffic at an engine that is not ready costs uptime.</p>
     <div class="tablewrap">${rows.length ? `<table><thead><tr>
       <th>ID</th><th>Upstream</th><th>Backends</th><th class="num">Context</th>
       <th class="num">Max out</th><th>Quant</th>
       <th class="num">Prompt $/M</th><th class="num">Completion $/M</th>
-      <th>Caps</th><th>State</th>
+      <th>Caps</th><th>State</th><th></th>
     </tr></thead><tbody>${rows.map(m => `<tr>
       <td class="mono">${esc(m.id)}</td>
       <td class="mono muted">${esc(m.upstream_model)}</td>
@@ -384,7 +385,50 @@ async function renderModels() {
       <td class="num">${perMillion(m.completion_usd)}</td>
       <td>${m.tools ? '<span class="pill ok">tools</span> ' : ''}${m.reasoning ? '<span class="pill ok">reasoning</span>' : ''}</td>
       <td>${m.is_free ? '<span class="pill warn">free</span> ' : ''}${m.ready ? '<span class="pill ok">ready</span>' : '<span class="pill off">hidden</span>'}</td>
-    </tr>`).join('')}</tbody></table>` : '<div class="empty">No models configured</div>'}</div>`;
+      <td style="white-space:nowrap">
+        <button data-ready="${esc(m.id)}" data-to="${m.ready ? '0' : '1'}">${m.ready ? 'Hide' : 'Publish'}</button>
+        <button class="danger" data-remove="${esc(m.id)}" data-node="${esc((m.backends || [])[0] || '')}">Uninstall</button>
+      </td>
+    </tr>`).join('')}</tbody></table>` : '<div class="empty">No models configured</div>'}</div>
+    <div id="models-out"></div>`;
+
+  main().querySelectorAll('[data-ready]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      await api('/admin/api/publish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_id: b.dataset.ready, ready: b.dataset.to === '1' }),
+      });
+      renderModels();
+    } catch (e) {
+      b.disabled = false;
+      document.getElementById('models-out').innerHTML = `<div class="note block">${esc(e.message)}</div>`;
+    }
+  });
+
+  main().querySelectorAll('[data-remove]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.remove;
+    // Uninstalling deletes the catalog entry and stops the engine. It is not
+    // recoverable from here, and doing it to a published model takes it out
+    // from under live traffic, so it is worth one deliberate confirmation.
+    if (!confirm(`Uninstall ${id}?\n\nThis removes it from the catalog and stops the engine on the node. Downloaded weights stay on disk.`)) return;
+    b.disabled = true;
+    b.textContent = 'Removing…';
+    try {
+      const r = await api('/admin/api/uninstall', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_id: id, node: b.dataset.node || undefined }),
+      });
+      renderModels();
+      if (r.warning) {
+        document.getElementById('models-out').innerHTML = `<div class="note warn">${esc(r.warning)}</div>`;
+      }
+    } catch (e) {
+      b.disabled = false;
+      b.textContent = 'Uninstall';
+      document.getElementById('models-out').innerHTML = `<div class="note block">${esc(e.message)}</div>`;
+    }
+  });
 }
 
 // Per-token prices are unreadable at these magnitudes, so the table shows the
