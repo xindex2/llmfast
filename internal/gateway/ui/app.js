@@ -581,7 +581,10 @@ function hardwareLine(hw) {
     parts.push('no GPU');
     if (hw.mem_bandwidth_gbs) parts.push(`~${hw.mem_bandwidth_gbs} GB/s mem`);
   }
-  parts.push(`${hw.cpu_cores} cores`, gib(hw.ram_bytes) + ' RAM', gib(hw.disk_free_bytes) + ' free');
+  parts.push(`${hw.cpu_cores} cores`, gib(hw.ram_bytes) + ' RAM');
+  // 0 means the figure was rejected as a shared filesystem's total, not that
+  // the disk is full.
+  parts.push(hw.disk_free_bytes ? gib(hw.disk_free_bytes) + ' free' : 'disk free unknown (network volume)');
   if (!hw.has_nvme) parts.push('no NVMe');
   // The pairing that decides whether any engine can start at all.
   if (hw.driver_cuda && hw.torch_cuda) {

@@ -201,7 +201,16 @@ func detectDiskFree(path string) int64 {
 	for i := 0; i < 12; i++ {
 		var st syscall.Statfs_t
 		if err := syscall.Statfs(path, &st); err == nil {
-			return int64(st.Bavail) * int64(st.Bsize)
+			free := int64(st.Bavail) * int64(st.Bsize)
+			// A pod volume is often a share of a cluster filesystem, and
+			// statfs then reports the whole cluster: a RunPod volume backed by
+			// MooseFS answers 203 TiB free for a 100GB allocation. Presenting
+			// that next to a model's disk requirement is worse than presenting
+			// nothing, because the check silently always passes.
+			if free > networkShareThreshold {
+				return 0
+			}
+			return free
 		}
 		parent := filepath.Dir(path)
 		if parent == path {
@@ -302,3 +311,8 @@ func detectTorchCUDA() string {
 	}
 	return ""
 }
+
+// networkShareThreshold is the point past which a free-space figure is more
+// likely to be a shared cluster's total than this node's own allocation. No
+// pod rents a petabyte.
+const networkShareThreshold = 100 << 40 // 100 TiB
