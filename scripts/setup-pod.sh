@@ -121,8 +121,15 @@ export PATH="$VENV/bin:$WORKDIR/bin:$PATH"
 
 if [ ! -x "$VENV/bin/python" ]; then
   say "Creating $VENV"
+  # Deliberately NOT --system-site-packages. With the container's packages
+  # visible, pip reports the image's nvidia-cublas, nvidia-cuda-runtime and
+  # friends as already satisfied and does not install them into the venv --
+  # so the venv depends on files that the next pod reset deletes, which is
+  # precisely what putting it on the volume was meant to prevent. A clean
+  # venv costs about 15GB of volume and is actually self-contained.
   apt-get install -y -qq python3-venv >/dev/null 2>&1 || true
-  python3 -m venv --system-site-packages "$VENV"
+  python3 -m venv "$VENV"
+  "$VENV/bin/pip" install --no-cache-dir --upgrade pip >/dev/null
 fi
 
 if command -v vllm >/dev/null 2>&1 && [ -x "$VENV/bin/vllm" ]; then
