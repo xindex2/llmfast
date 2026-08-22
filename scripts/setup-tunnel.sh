@@ -7,6 +7,12 @@
 #   bash scripts/setup-tunnel.sh llmfast api.llmfa.st admin.llmfa.st
 set -euo pipefail
 
+WORKDIR="${WORKDIR:-/workspace}"
+export PATH="$WORKDIR/bin:$PATH"
+# Keep the credentials on the volume; /root is recreated by a pod reset.
+mkdir -p "$WORKDIR/cloudflared"
+[ -L /root/.cloudflared ] || [ -d /root/.cloudflared ] || ln -sfn "$WORKDIR/cloudflared" /root/.cloudflared
+
 NAME="${1:-llmfast}"
 API_HOST="${2:-api.llmfa.st}"
 ADMIN_HOST="${3:-}"

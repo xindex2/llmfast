@@ -108,66 +108,51 @@ echo "binaries: $(ls "$REPO/dist" 2>/dev/null | tr '\n' ' ')"
 say "vLLM"
 # RunPod pods cannot normally run Docker inside themselves, so the engine is
 # installed directly and the agent runs in native mode.
-# A pod reset recreates the container from its image and keeps only the volume,
-# so this can find /workspace fully populated and the Python environment empty.
-# versions.lock, written at the end of a successful run, is what makes that
-# recoverable without rediscovering the combination that worked.
-if [ -f "$WORKDIR/versions.lock" ] && ! command -v vllm >/dev/null 2>&1; then
-  say "Restoring a known-good environment"
-  echo "  $WORKDIR/versions.lock records what worked on this host before:"
-  sed 's/^/    /' "$WORKDIR/versions.lock"
-  LOCK_VLLM=$(sed -nE 's/^vllm=(.+)$/\1/p' "$WORKDIR/versions.lock")
-  LOCK_TORCH=$(sed -nE 's/^torch=(.+)$/\1/p' "$WORKDIR/versions.lock")
-  # A torch version carries its CUDA build as a local suffix -- 2.9.0+cu128 --
-  # and those builds live on PyTorch's own index, not PyPI. Pinning the exact
-  # version without pointing at that index finds nothing.
-  LOCK_CUDA=$(printf '%s' "$LOCK_TORCH" | sed -nE 's/.*\+(cu[0-9]+)$/\1/p')
-  INDEX=""
-  if [ -n "$LOCK_CUDA" ]; then
-    INDEX="--extra-index-url https://download.pytorch.org/whl/$LOCK_CUDA"
-  fi
-  if [ -n "$LOCK_VLLM" ] && [ -n "$LOCK_TORCH" ]; then
-    pip install --upgrade pip
-    # shellcheck disable=SC2086
-    pip install "vllm==$LOCK_VLLM" "torch==$LOCK_TORCH" hf_transfer $INDEX || \
-      echo "  could not restore the pinned versions; falling back to a fresh install"
-  fi
+# Python lives on the volume, not in the container.
+#
+# Editing a pod in the RunPod console -- resizing a disk, changing a port --
+# recreates the container from its image. /workspace survives; everything
+# installed into the system Python does not. Reinstalling vLLM is a 3GB
+# download and twenty minutes, and it has to happen every single time.
+#
+# A virtualenv under /workspace survives instead, so a reset costs seconds.
+VENV="$WORKDIR/venv"
+export PATH="$VENV/bin:$WORKDIR/bin:$PATH"
+
+if [ ! -x "$VENV/bin/python" ]; then
+  say "Creating $VENV"
+  apt-get install -y -qq python3-venv >/dev/null 2>&1 || true
+  python3 -m venv --system-site-packages "$VENV"
 fi
 
-if command -v vllm >/dev/null 2>&1; then
-  echo "already installed: $(vllm --version 2>/dev/null | head -1)"
+if command -v vllm >/dev/null 2>&1 && [ -x "$VENV/bin/vllm" ]; then
+  echo "already installed in the venv: $("$VENV/bin/python" -c 'import vllm; print(vllm.__version__)' 2>/dev/null)"
 else
-  echo "This pulls PyTorch and the CUDA runtime — several gigabytes, usually"
-  echo "five to fifteen minutes. Progress is shown so a slow link does not look"
-  echo "like a hang."
+  echo "This pulls PyTorch and the CUDA runtime -- several gigabytes."
   echo
-  # Deliberately not quiet. A silent multi-gigabyte download is indistinguishable
-  # from a stuck process, and the temptation is to Ctrl-C a working install.
-  pip install --upgrade pip
 
-  # Pin torch to whatever the image already ships and let pip pick a vLLM that
-  # accepts it, rather than taking the newest vLLM and letting it drag in a
-  # torch the driver cannot run.
-  #
-  # This is not hypothetical. A pod on driver CUDA 12.8 running
-  # runpod/pytorch:...-cu1281-torch280 installed vLLM 0.27, which requires
-  # torch 2.13 -- a version that exists only for CUDA 13. Every engine then
-  # exited with "The NVIDIA driver on your system is too old", and unpicking it
-  # cost hours.
-  TORCH_PIN=""
-  if HAVE_TORCH=$(python3 -c "import torch; print(torch.__version__.split('+')[0])" 2>/dev/null); then
-    TORCH_PIN="torch==$HAVE_TORCH"
-    echo "pinning to the image's torch $HAVE_TORCH so the driver stays satisfied"
+  # Install torch first, pinned and from the index that has a build for this
+  # driver. Left to resolve everything at once, pip backtracks through dozens
+  # of cuda-python versions and is killed by the OOM killer on a container
+  # with modest RAM -- which looks like "Killed" and nothing else.
+  TORCH_VER="${TORCH_VERSION:-}"
+  CUDA_TAG=$(nvidia-smi 2>/dev/null | sed -nE 's/.*CUDA Version:[[:space:]]*([0-9]+)\.([0-9]+).*/cu\1\2/p' | head -1)
+  CUDA_TAG=${CUDA_TAG:-cu128}
+  if [ -f "$WORKDIR/versions.lock" ]; then
+    TORCH_VER=$(sed -nE 's/^torch=(.+)\+.*$/\1/p' "$WORKDIR/versions.lock")
   fi
-  # shellcheck disable=SC2086
-  pip install vllm $TORCH_PIN
 
-  # Several base images export HF_HUB_ENABLE_HF_TRANSFER=1 without shipping the
-  # package, and the download then refuses to start. It is also genuinely
-  # faster on a 20GB checkpoint, so install it rather than turn it off.
-  pip install hf_transfer
+  # --no-cache-dir keeps a 3GB wheel cache off the container disk.
+  PIP="pip install --no-cache-dir"
+  if [ -n "$TORCH_VER" ]; then
+    echo "installing torch $TORCH_VER for $CUDA_TAG"
+    $PIP "torch==$TORCH_VER" --index-url "https://download.pytorch.org/whl/$CUDA_TAG"
+  fi
+  $PIP "vllm${VLLM_VERSION:+==$VLLM_VERSION}" --extra-index-url "https://download.pytorch.org/whl/$CUDA_TAG"
+  $PIP hf_transfer
+
   echo
-  echo "installed: $(vllm --version 2>/dev/null | head -1)"
+  echo "installed: $("$VENV/bin/python" -c 'import vllm; print(vllm.__version__)' 2>/dev/null)"
 fi
 
 # RunPod images ship their own PyTorch. If vLLM replaced it with a build for a
@@ -203,11 +188,16 @@ fi
 echo "recorded working versions in $WORKDIR/versions.lock"
 
 say "cloudflared"
-if ! command -v cloudflared >/dev/null 2>&1; then
-  curl -fsSL -o /usr/local/bin/cloudflared \
+mkdir -p "$WORKDIR/bin"
+if [ ! -x "$WORKDIR/bin/cloudflared" ]; then
+  curl -fsSL -o "$WORKDIR/bin/cloudflared" \
     https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-  chmod +x /usr/local/bin/cloudflared
+  chmod +x "$WORKDIR/bin/cloudflared"
 fi
+# Its credentials live in /root by default, which is exactly what a reset
+# destroys. Keep them on the volume instead.
+mkdir -p "$WORKDIR/cloudflared"
+ln -sfn "$WORKDIR/cloudflared" /root/.cloudflared
 cloudflared --version
 
 say "Tokens and config"

@@ -21,6 +21,9 @@ WORKDIR="${WORKDIR:-/workspace}"
 REPO="${REPO:-$WORKDIR/llmfast}"
 LOGDIR="$WORKDIR/logs"
 RUNDIR="$WORKDIR/run"
+# Everything installed by setup-pod.sh lives on the volume so that a pod reset
+# -- which recreates the container from its image -- does not destroy it.
+export PATH="$WORKDIR/venv/bin:$WORKDIR/bin:$PATH"
 TUNNEL="${TUNNEL_NAME:-llmfast}"
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; BLD=$'\033[1m'; OFF=$'\033[0m'
@@ -141,6 +144,15 @@ preflight() {
       ok "port $p is free"
     fi
   done
+
+  if command -v vllm >/dev/null 2>&1; then
+    ok "vllm ($(vllm --version 2>/dev/null | tail -1 | cut -c1-40))"
+  else
+    # Not a blocker: the gateway and admin UI should still come up so the
+    # operator can see the state of things. Only installing a model needs vLLM.
+    warn "vllm is not on PATH -- models cannot be installed."
+    warn "  run scripts/setup-pod.sh to install it into $WORKDIR/venv"
+  fi
 
   if command -v cloudflared >/dev/null 2>&1; then
     if [ -f /root/.cloudflared/config.yml ]; then
