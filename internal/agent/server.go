@@ -34,6 +34,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/node/stop", s.auth(s.handleStop))
 	mux.HandleFunc("POST /v1/node/remove", s.auth(s.handleRemove))
 	mux.HandleFunc("GET /v1/node/logs", s.auth(s.handleLogs))
+	mux.HandleFunc("GET /v1/node/cache", s.auth(s.handleCacheList))
+	mux.HandleFunc("POST /v1/node/cache/delete", s.auth(s.handleCacheDelete))
 	// Unauthenticated liveness, so a load balancer or systemd can probe it.
 	mux.HandleFunc("GET /health", s.handleHealth)
 	return mux
@@ -190,6 +192,10 @@ func bearer(h string) string {
 	return ""
 }
 
+func readJSON(r *http.Request, v any) error {
+	return json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<16)).Decode(v)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -198,4 +204,50 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"message": msg}})
+}
+
+// inUseRepos maps the HuggingFace ids this node is currently serving from, so
+// weights cannot be deleted out from under a running engine.
+func (s *Server) inUseRepos() map[string]bool {
+	out := map[string]bool{}
+	for _, v := range s.Sup.List() {
+		if v.Spec.HFID != "" {
+			out[v.Spec.HFID] = true
+		}
+		if v.Spec.GGUFRepo != "" {
+			out[v.Spec.GGUFRepo] = true
+		}
+	}
+	return out
+}
+
+func (s *Server) handleCacheList(w http.ResponseWriter, r *http.Request) {
+	entries, err := ListCache(s.Runtime.HFCacheDir, s.inUseRepos())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var total int64
+	for _, e := range entries {
+		total += e.Bytes
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entries": entries, "total_bytes": total, "dir": s.Runtime.HFCacheDir,
+	})
+}
+
+func (s *Server) handleCacheDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Repo string `json:"repo"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	freed, err := DeleteCache(s.Runtime.HFCacheDir, body.Repo, s.inUseRepos())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"repo": body.Repo, "freed_bytes": freed})
 }

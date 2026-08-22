@@ -449,3 +449,32 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// adminNodeCache lists the weights a node has downloaded.
+func (s *Server) adminNodeCache(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	out, err := s.nodes.Cache(ctx, r.PathValue("node"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "server_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// adminNodeCacheDelete reclaims the disk one model's weights are using.
+func (s *Server) adminNodeCacheDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Repo string `json:"repo"`
+	}
+	_ = decodeJSON(r, &body)
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+	out, err := s.nodes.DeleteCache(ctx, r.PathValue("node"), body.Repo)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	s.log.Info("deleted cached weights", "node", r.PathValue("node"), "repo", body.Repo)
+	writeJSON(w, http.StatusOK, out)
+}

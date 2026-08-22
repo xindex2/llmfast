@@ -411,7 +411,7 @@ async function renderModels() {
     // Uninstalling deletes the catalog entry and stops the engine. It is not
     // recoverable from here, and doing it to a published model takes it out
     // from under live traffic, so it is worth one deliberate confirmation.
-    if (!confirm(`Uninstall ${id}?\n\nThis removes it from the catalog and stops the engine on the node. Downloaded weights stay on disk.`)) return;
+    if (!confirm(`Uninstall ${id}?\n\nThis removes it from the catalog and stops the engine on the node.\n\nThe downloaded weights stay on disk so a reinstall is instant. To reclaim that space, use "Downloaded weights" on the Nodes page.`)) return;
     b.disabled = true;
     b.textContent = 'Removing…';
     try {
@@ -590,6 +590,57 @@ function hardwareLine(hw) {
   return parts.join(' · ');
 }
 
+// showCache lists what a node has downloaded and lets it be reclaimed. Without
+// this the only symptom of a filling volume is the volume filling: the models
+// are gone from the catalog and their weights are not.
+async function showCache(node) {
+  const target = document.getElementById('cache-' + cssId(node));
+  target.innerHTML = '<div class="note info"><span class="spinner"></span>measuring…</div>';
+  let d;
+  try {
+    d = await api(`/admin/api/nodes/${encodeURIComponent(node)}/cache`);
+  } catch (e) {
+    target.innerHTML = `<div class="note block">${esc(e.message)}</div>`;
+    return;
+  }
+  const rows = d.entries || [];
+  if (!rows.length) {
+    target.innerHTML = '<div class="note info">No downloaded weights on this node.</div>';
+    return;
+  }
+  target.innerHTML = `<table style="margin-top:6px"><thead><tr>
+      <th>Repository</th><th class="num">Size</th><th></th></tr></thead><tbody>
+    ${rows.map(e => `<tr>
+      <td class="mono">${esc(e.repo)}</td>
+      <td class="num">${gib(e.bytes)}</td>
+      <td>${e.in_use
+        ? '<span class="pill ok">serving</span>'
+        : `<button class="danger" data-delcache="${esc(e.repo)}">Delete</button>`}</td>
+    </tr>`).join('')}
+    <tr><td class="muted">total</td><td class="num">${gib(d.total_bytes)}</td><td></td></tr>
+  </tbody></table>`;
+
+  target.querySelectorAll('[data-delcache]').forEach(b => b.onclick = async () => {
+    const repo = b.dataset.delcache;
+    if (!confirm(`Delete the downloaded weights for ${repo}?\n\nThis frees disk now. Reinstalling the model later means downloading it again.`)) return;
+    b.disabled = true;
+    b.textContent = 'Deleting…';
+    try {
+      const r = await api(`/admin/api/nodes/${encodeURIComponent(node)}/cache/delete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo }),
+      });
+      await showCache(node);
+      target.insertAdjacentHTML('afterbegin',
+        `<div class="note ok">Freed ${esc(gib(r.freed_bytes))}.</div>`);
+    } catch (e) {
+      b.disabled = false;
+      b.textContent = 'Delete';
+      target.insertAdjacentHTML('afterbegin', `<div class="note block">${esc(e.message)}</div>`);
+    }
+  });
+}
+
 function engineStatePill(state) {
   if (state === 'ready') return '<span class="pill ok">ready</span>';
   if (state === 'starting') return '<span class="pill warn"><span class="spinner"></span>starting</span>';
@@ -645,6 +696,11 @@ async function renderNodes() {
             </td>
           </tr>${i.error ? `<tr><td colspan="6"><div class="note block">${esc(i.error)}</div></td></tr>` : ''}`).join('')}
         </tbody></table>` : '<div class="note info">No engines running on this node.</div>'}
+        <div style="margin-top:10px">
+          <button data-cache="${esc(n.name)}">Downloaded weights…</button>
+          <span class="hint">Uninstalling a model leaves its weights on disk so a reinstall is instant.</span>
+        </div>
+        <div id="cache-${cssId(n.name)}"></div>
         <div id="logs-${cssId(n.name)}"></div>
       </div>`;
     }).join('')}`;
@@ -659,6 +715,7 @@ async function renderNodes() {
       target.innerHTML = `<div class="note block">${esc(e.message)}</div>`;
     }
   });
+  main().querySelectorAll('[data-cache]').forEach(b => b.onclick = () => showCache(b.dataset.cache));
   main().querySelectorAll('[data-stopengine]').forEach(b => b.onclick = async () => {
     if (!confirm(`Stop ${b.dataset.stopengine} on ${b.dataset.node}? It will not restart by itself.`)) return;
     b.disabled = true;

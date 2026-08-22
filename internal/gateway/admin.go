@@ -73,6 +73,8 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("POST /admin/api/publish", s.guard(s.adminPublish))
 	mux.HandleFunc("POST /admin/api/uninstall", s.guard(s.adminUninstall))
 	mux.HandleFunc("GET /admin/api/nodes/{node}/logs", s.guard(s.adminNodeLogs))
+	mux.HandleFunc("GET /admin/api/nodes/{node}/cache", s.guard(s.adminNodeCache))
+	mux.HandleFunc("POST /admin/api/nodes/{node}/cache/delete", s.guard(s.adminNodeCacheDelete))
 	mux.HandleFunc("POST /admin/api/nodes/{node}/stop", s.guard(s.adminNodeStop))
 
 	// Playground: run a real completion against an installed model.

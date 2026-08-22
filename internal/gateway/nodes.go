@@ -198,6 +198,26 @@ func (m *NodeManager) Logs(ctx context.Context, name, servedName string, n int) 
 	return out, nil
 }
 
+// Cache reports the weights this node has on disk. Uninstalling a model leaves
+// them there on purpose so a reinstall is instant, which means the only way to
+// know where a full volume went is to ask.
+func (m *NodeManager) Cache(ctx context.Context, name string) (map[string]any, error) {
+	var out map[string]any
+	if err := m.call(ctx, name, http.MethodGet, "/v1/node/cache", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *NodeManager) DeleteCache(ctx context.Context, name, repo string) (map[string]any, error) {
+	var out map[string]any
+	body := map[string]string{"repo": repo}
+	if err := m.call(ctx, name, http.MethodPost, "/v1/node/cache/delete", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (m *NodeManager) call(ctx context.Context, name, method, path string, in, out any) error {
 	m.mu.RLock()
 	n, ok := m.nodes[name]
