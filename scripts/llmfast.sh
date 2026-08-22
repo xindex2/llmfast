@@ -145,6 +145,18 @@ preflight() {
     fi
   done
 
+  # The container disk and the volume are separate, and an install fills the
+  # container's /tmp long before the volume looks busy.
+  local rootfree tmpfree
+  rootfree=$(df -Pm / 2>/dev/null | awk 'NR==2{print $4}')
+  tmpfree=$(df -Pm "$WORKDIR" 2>/dev/null | awk 'NR==2{print $4}')
+  if [ -n "${rootfree:-}" ] && [ "$rootfree" -lt 2048 ]; then
+    warn "only ${rootfree}MB free on the container disk (/) -- installs unpack through /tmp there"
+    warn "  export TMPDIR=$WORKDIR/tmp before running pip"
+  fi
+  [ -n "${tmpfree:-}" ] && [ "$tmpfree" -lt 10240 ] &&
+    warn "only $((tmpfree / 1024))GB free on $WORKDIR -- model weights need room"
+
   if command -v vllm >/dev/null 2>&1; then
     ok "vllm ($(vllm --version 2>/dev/null | tail -1 | cut -c1-40))"
   else

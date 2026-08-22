@@ -119,6 +119,14 @@ say "vLLM"
 VENV="$WORKDIR/venv"
 export PATH="$VENV/bin:$WORKDIR/bin:$PATH"
 
+# pip unpacks every wheel through TMPDIR before installing it, and TMPDIR
+# defaults to /tmp -- which is the container's disk, not the volume. Installing
+# torch means unpacking roughly 2GB of CUDA libraries there, and the failure is
+# "OSError: [Errno 28] No space left on device" pointing at nothing in
+# particular while /workspace still has tens of gigabytes free.
+export TMPDIR="$WORKDIR/tmp"
+mkdir -p "$TMPDIR"
+
 if [ ! -x "$VENV/bin/python" ]; then
   say "Creating $VENV"
   # Deliberately NOT --system-site-packages. With the container's packages
