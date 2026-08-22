@@ -269,25 +269,23 @@ say "Hardware detected"
 
 cat <<NEXT
 
-Ready. Three things to start, each in its own terminal tab.
+Ready.
 
-  source /workspace/llmfast.env
+Start everything -- detached, so closing this terminal does not stop it:
 
-  1) the agent — supervises engines
-     $REPO/dist/llmfast-agent \
-       -listen 127.0.0.1:9900 -name gpu-a \
-       -state-dir /workspace/state -hf-cache /workspace/hf -mode native
+  bash $REPO/scripts/llmfast.sh start
 
-  2) the gateway — the API and admin UI
-     cd /workspace && $REPO/dist/llmfast -config /workspace/config.yaml
+Then, once, to put api.llmfa.st in front of it:
 
-  3) the tunnel — puts api.llmfa.st in front of it
-     cloudflared tunnel login
-     cloudflared tunnel create llmfast
-     cloudflared tunnel route dns llmfast api.llmfa.st
-     cloudflared tunnel --url http://127.0.0.1:8080 run llmfast
+  cloudflared tunnel login
+  cloudflared tunnel create llmfast          # skip if the tunnel already exists
+  bash $REPO/scripts/setup-tunnel.sh llmfast api.llmfa.st admin.llmfa.st
+  bash $REPO/scripts/llmfast.sh restart
 
-Your admin token is in /workspace/llmfast.env. Print it with:
-  source /workspace/llmfast.env && echo \$LLMFAST_ADMIN_TOKEN
+Day to day:
+
+  bash $REPO/scripts/llmfast.sh status       # is everything up, including the public hostname
+  bash $REPO/scripts/llmfast.sh logs         # follow all three logs
+  bash $REPO/scripts/llmfast.sh token        # print the admin token to sign in with
 
 NEXT
