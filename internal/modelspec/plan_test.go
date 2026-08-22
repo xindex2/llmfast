@@ -1185,3 +1185,25 @@ func TestCUDAVersionComparison(t *testing.T) {
 		}
 	}
 }
+
+// TestGraceBlackwellIsNotAmpere: "GB10" matches none of the datacenter
+// patterns in gpuHasFP8, so it fell through to the Ampere default and was
+// denied both fp8 and NVFP4 -- the two formats that make its 128GB unified
+// pool worth anything. A 117B NVFP4 checkpoint that fits comfortably was
+// reported as impossible.
+func TestGraceBlackwellIsNotAmpere(t *testing.T) {
+	for _, name := range []string{"NVIDIA GB10", "NVIDIA GB10 (DGX Spark)"} {
+		a := archOf(name)
+		if !a.fp8 || !a.nvfp4 {
+			t.Errorf("%s: fp8=%v nvfp4=%v, want both on Blackwell", name, a.fp8, a.nvfp4)
+		}
+		if a.name != "Blackwell" {
+			t.Errorf("%s classified as %q", name, a.name)
+		}
+		// Its bandwidth is the whole trade-off and must not fall back to the
+		// generic guess.
+		if bw, known := gpuBandwidthGBs(name); !known || bw > 400 {
+			t.Errorf("%s bandwidth = %v (known=%v); LPDDR5X is ~273 GB/s", name, bw, known)
+		}
+	}
+}

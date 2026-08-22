@@ -857,7 +857,8 @@ func canRunQuant(a arch, quant string) (bool, string) {
 // because only Blackwell adds hardware NVFP4.
 func isBlackwell(name string) bool {
 	n := strings.ToUpper(name)
-	for _, b := range []string{"B100", "B200", "GB200", "B300", "5090", "5080", "RTX PRO"} {
+	for _, b := range []string{"B100", "B200", "GB200", "B300", "GB10", "DGX SPARK",
+		"5090", "5080", "RTX PRO"} {
 		if strings.Contains(n, b) {
 			return true
 		}
@@ -906,6 +907,12 @@ func gpuHasFP8(name string) bool {
 	// Blackwell consumer and RTX PRO workstation cards.
 	case strings.Contains(n, "5090"), strings.Contains(n, "RTX PRO"):
 		return true
+	// Grace-Blackwell desktop parts. Named separately because "GB10" matches
+	// none of the datacenter patterns above, and falling through to the Ampere
+	// default would deny it both fp8 and NVFP4 -- the two formats that make a
+	// 128GB unified pool worth having.
+	case strings.Contains(n, "GB10"), strings.Contains(n, "DGX SPARK"):
+		return true
 	}
 	return false
 }
@@ -928,6 +935,12 @@ func gpuBandwidthGBs(name string) (float64, bool) {
 		match string
 		bw    float64
 	}{
+		// Grace-Blackwell desktop parts share one pool of LPDDR5X between CPU
+		// and GPU. The capacity is enormous for the price and the bandwidth is
+		// not: a GB10 holds models an A40 cannot, and reads them at roughly a
+		// third of the rate. Which of those dominates depends entirely on how
+		// many parameters the model activates per token.
+		{"GB10", 273}, {"DGX SPARK", 273}, {"GB300", 8000},
 		{"B200", 8000}, {"H200", 4800}, {"H100 SXM", 3350}, {"H100", 2000},
 		{"A100-SXM", 2039}, {"A100 80", 2039}, {"A100", 1555},
 		{"RTX PRO 6000", 1792}, {"5090", 1792},
