@@ -108,6 +108,32 @@ echo "binaries: $(ls "$REPO/dist" 2>/dev/null | tr '\n' ' ')"
 say "vLLM"
 # RunPod pods cannot normally run Docker inside themselves, so the engine is
 # installed directly and the agent runs in native mode.
+# A pod reset recreates the container from its image and keeps only the volume,
+# so this can find /workspace fully populated and the Python environment empty.
+# versions.lock, written at the end of a successful run, is what makes that
+# recoverable without rediscovering the combination that worked.
+if [ -f "$WORKDIR/versions.lock" ] && ! command -v vllm >/dev/null 2>&1; then
+  say "Restoring a known-good environment"
+  echo "  $WORKDIR/versions.lock records what worked on this host before:"
+  sed 's/^/    /' "$WORKDIR/versions.lock"
+  LOCK_VLLM=$(sed -nE 's/^vllm=(.+)$/\1/p' "$WORKDIR/versions.lock")
+  LOCK_TORCH=$(sed -nE 's/^torch=(.+)$/\1/p' "$WORKDIR/versions.lock")
+  # A torch version carries its CUDA build as a local suffix -- 2.9.0+cu128 --
+  # and those builds live on PyTorch's own index, not PyPI. Pinning the exact
+  # version without pointing at that index finds nothing.
+  LOCK_CUDA=$(printf '%s' "$LOCK_TORCH" | sed -nE 's/.*\+(cu[0-9]+)$/\1/p')
+  INDEX=""
+  if [ -n "$LOCK_CUDA" ]; then
+    INDEX="--extra-index-url https://download.pytorch.org/whl/$LOCK_CUDA"
+  fi
+  if [ -n "$LOCK_VLLM" ] && [ -n "$LOCK_TORCH" ]; then
+    pip install --upgrade pip
+    # shellcheck disable=SC2086
+    pip install "vllm==$LOCK_VLLM" "torch==$LOCK_TORCH" hf_transfer $INDEX || \
+      echo "  could not restore the pinned versions; falling back to a fresh install"
+  fi
+fi
+
 if command -v vllm >/dev/null 2>&1; then
   echo "already installed: $(vllm --version 2>/dev/null | head -1)"
 else

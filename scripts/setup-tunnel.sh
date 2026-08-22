@@ -30,11 +30,28 @@ if [ -z "$ID" ]; then
 fi
 echo "tunnel $NAME is $ID"
 
-say "Writing /root/.cloudflared/config.yml"
+# The credentials file lives outside /workspace, so a pod reset -- which is
+# what resizing a volume does -- destroys it while leaving the tunnel itself
+# and its DNS records in place. The visible symptom is error 1033 on a
+# hostname that was working an hour ago. Regenerating it is one call, and it
+# is the difference between a puzzling outage and a restart.
+CREDS="/root/.cloudflared/$ID.json"
 mkdir -p /root/.cloudflared
+if [ ! -f "$CREDS" ]; then
+  say "Restoring the tunnel credentials"
+  echo "  $CREDS is missing; regenerating it for the existing tunnel"
+  if ! cloudflared tunnel token --cred-file "$CREDS" "$NAME" 2>&1 | sed 's/^/  /'; then
+    echo
+    echo "  Could not regenerate the credentials. Log in first:"
+    echo "    cloudflared tunnel login"
+    exit 1
+  fi
+fi
+
+say "Writing /root/.cloudflared/config.yml"
 {
   echo "tunnel: $ID"
-  echo "credentials-file: /root/.cloudflared/$ID.json"
+  echo "credentials-file: $CREDS"
   echo "retries: 5"
   echo "grace-period: 30s"
   echo ""
