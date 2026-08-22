@@ -58,9 +58,13 @@ type Info struct {
 	Node             modelspec.Node `json:"node"`
 	Instances        []View         `json:"instances"`
 	EnginesAvailable []string       `json:"engines_available"`
-	RuntimeMode      string         `json:"runtime_mode"`
-	Version          string         `json:"version"`
-	UptimeSeconds    float64        `json:"uptime_seconds"`
+	// SupportedArchs is what the installed vLLM can actually serve. Empty when
+	// vLLM is absent or could not be queried, in which case callers must not
+	// treat an architecture's absence as a refusal.
+	SupportedArchs []string `json:"supported_archs,omitempty"`
+	RuntimeMode    string   `json:"runtime_mode"`
+	Version        string   `json:"version"`
+	UptimeSeconds  float64  `json:"uptime_seconds"`
 }
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +84,8 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, Info{
 		Node: node, Instances: s.Sup.List(), EnginesAvailable: engines,
-		RuntimeMode: s.Runtime.Mode, Version: s.Version,
+		SupportedArchs: SupportedArchs(),
+		RuntimeMode:    s.Runtime.Mode, Version: s.Version,
 		UptimeSeconds: time.Since(s.started).Seconds(),
 	})
 }

@@ -678,6 +678,7 @@ async function renderNodes() {
           ${n.reachable ? '<span class="pill ok">reachable</span>' : '<span class="pill down">unreachable</span>'}
           <span class="muted mono" style="font-size:12px">${esc(n.url)}</span>
           ${(info.engines_available || []).map(e => `<span class="pill off">${esc(e)}</span>`).join(' ')}
+          ${info.supported_archs ? `<span class="muted" style="font-size:12px">${info.supported_archs.length} architectures</span>` : ''}
         </div>
         ${n.reachable ? `<div class="hw">${esc(hardwareLine(info.node))}</div>` : ''}
         ${n.last_error ? `<div class="note block">${esc(n.last_error)}</div>` : ''}

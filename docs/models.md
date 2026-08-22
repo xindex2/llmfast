@@ -107,3 +107,54 @@ vllm bench serve \
 
 Watch TTFT p99, not the mean. The mean hides exactly the tail that moves you
 below the peer median and costs you tool-calling traffic through Auto Exacto.
+
+## Choosing a vLLM version
+
+Three things have to line up, and only the first is obvious:
+
+1. **vLLM implements the architecture.** The checkpoint names it in
+   `config.json` -- `Qwen3ForCausalLM`, `Qwen3MoeForCausalLM`,
+   `Qwen3_5ForConditionalGeneration` -- and whether vLLM can serve it depends
+   on the release. A version older than the model fails *after* the weights
+   have downloaded.
+2. **vLLM's torch pin has a build for your driver's CUDA.** Each vLLM release
+   pins one exact torch, and each torch version is built for particular CUDA
+   versions. A driver older than the build refuses to start with "The NVIDIA
+   driver on your system is too old".
+3. **The driver belongs to the host.** In a container you cannot upgrade it.
+
+That combination is why the newest vLLM is often the wrong answer. On a host
+with a CUDA 12.8 driver:
+
+| vLLM | torch pin | cu128 build exists | Qwen3.5 support |
+|---|---|---|---|
+| 0.11.2 | 2.9.0 | yes | no |
+| 0.26.0 | 2.11.0 | yes | **yes** |
+| 0.27.1 | 2.13.0 | **no** | yes |
+
+0.26.0 is the newest release that satisfies all three. 0.27.1 is newer and
+cannot run at all.
+
+To work it out for a driver:
+
+```bash
+# The highest CUDA this host's driver supports
+nvidia-smi | grep "CUDA Version"
+
+# Which torch versions have a build for it (substitute cu128)
+curl -s https://download.pytorch.org/whl/cu128/torch/ | grep -o 'torch-2\.[0-9]*\.[0-9]*' | sort -uV | tail -3
+
+# Which torch a given vLLM pins
+curl -s https://pypi.org/pypi/vllm/0.26.0/json | python3 -c \
+  "import json,sys;print([r for r in json.load(sys.stdin)['info']['requires_dist'] if r.startswith('torch')])"
+
+# Whether that vLLM implements the architecture
+curl -s https://raw.githubusercontent.com/vllm-project/vllm/v0.26.0/vllm/model_executor/models/registry.py \
+  | grep Qwen3_5
+```
+
+The admin UI checks the first point for you: the agent asks the installed
+vLLM for its registry, and Inspect blocks a model the engine cannot implement
+rather than letting it fail at launch. `setup-pod.sh` handles the second by
+pinning torch to whatever the image ships, since the image is built for the
+host it runs on.

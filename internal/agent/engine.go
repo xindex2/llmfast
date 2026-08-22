@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -238,3 +239,39 @@ func EngineAvailable(engine string, rt Runtime) bool {
 	}
 	return false
 }
+
+// SupportedArchs asks the installed vLLM which model architectures it can
+// serve.
+//
+// This is the single most useful thing to know before an install, and the
+// hardest to infer: a checkpoint's architecture is in its config.json, and
+// whether the engine implements it depends on the exact vLLM release. Getting
+// it wrong costs five restart attempts and a traceback whose real cause --
+// "Transformers does not recognize this architecture" -- is buried dozens of
+// frames above the line that gets reported. The registry answers it exactly.
+//
+// Resolved once: importing vLLM takes several seconds, and the answer cannot
+// change while the agent is running.
+var SupportedArchs = sync.OnceValue(func() []string {
+	ctx, cancel := execTimeout(120 * time.Second)
+	defer cancel()
+	const script = `
+import json, sys
+try:
+    from vllm.model_executor.models.registry import ModelRegistry
+    sys.stdout.write(json.dumps(sorted(ModelRegistry.get_supported_archs())))
+except Exception:
+    sys.stdout.write("[]")
+`
+	for _, py := range []string{"python3", "python"} {
+		out, err := exec.CommandContext(ctx, py, "-c", script).Output()
+		if err != nil {
+			continue
+		}
+		var archs []string
+		if json.Unmarshal(out, &archs) == nil && len(archs) > 0 {
+			return archs
+		}
+	}
+	return nil
+})

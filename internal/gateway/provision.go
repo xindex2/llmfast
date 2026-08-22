@@ -113,6 +113,23 @@ func (s *Server) adminInspect(w http.ResponseWriter, r *http.Request) {
 			np.Plan.Blockers = append(np.Plan.Blockers,
 				np.Plan.Engine+" is not installed on this node")
 		}
+		// Nor is it any use if the engine has never heard of this architecture.
+		// The checkpoint names it in config.json; whether vLLM implements it
+		// depends on the exact release, and a version too old to know it fails
+		// after the weights have downloaded, with a traceback whose real cause
+		// is dozens of frames above the line that gets reported.
+		//
+		// An empty list means the question could not be asked, not that the
+		// answer is no, so it is only acted on when the node answered.
+		if np.Plan.Engine == "vllm" && len(st.Info.SupportedArchs) > 0 &&
+			info.Architecture != "" && !contains(st.Info.SupportedArchs, info.Architecture) {
+			np.Plan.Fits, np.Plan.Viable = false, false
+			np.Plan.Blockers = append(np.Plan.Blockers, fmt.Sprintf(
+				"the vLLM installed on this node does not implement %s. That is a version "+
+					"question, not a hardware one: upgrade vLLM to a release that supports it, "+
+					"keeping torch within what this host's driver can run",
+				info.Architecture))
+		}
 		res.Plans = append(res.Plans, np)
 	}
 
