@@ -80,6 +80,10 @@ func main() {
 	sup := agent.NewSupervisor(rt, *stateDir, *portBase,
 		func(format string, args ...any) { log.Info(fmt.Sprintf(format, args...)) })
 
+	// Ask vLLM for its model registry in the background; it imports the whole
+	// library, which is far too slow to do while answering a request.
+	agent.StartArchDetection()
+
 	srv := agent.NewServer(node, sup, rt, token, version)
 
 	printHardware(node)

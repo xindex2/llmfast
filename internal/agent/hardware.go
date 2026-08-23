@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -39,10 +41,13 @@ func DetectHardware(name, dataDir string, bandwidthOverride float64) modelspec.N
 	if n.MemBandwidthGBs <= 0 {
 		n.MemBandwidthGBs = estimateBandwidth(n.CPUModel, n.CPUCores)
 	}
-	// Only meaningful with a GPU present, and importing torch costs seconds.
+	// nvidia-smi is fast. Importing torch is not -- seconds locally, far longer
+	// from a venv on a network filesystem -- so it is filled in behind us and
+	// read back on the next hardware refresh rather than delaying startup.
 	if len(n.GPUs) > 0 {
 		n.DriverCUDA = detectDriverCUDA()
-		n.TorchCUDA = detectTorchCUDA()
+		n.TorchCUDA = TorchCUDA()
+		startTorchProbe()
 	}
 	return n
 }
@@ -316,3 +321,28 @@ func detectTorchCUDA() string {
 // likely to be a shared cluster's total than this node's own allocation. No
 // pod rents a petabyte.
 const networkShareThreshold = 100 << 40 // 100 TiB
+
+// torchCUDA caches the CUDA version PyTorch was built against.
+var torchCUDA atomic.Pointer[string]
+
+// TorchCUDA returns the cached value, or "" if the probe has not finished.
+// Callers treat "" as unknown, never as a fault.
+func TorchCUDA() string {
+	if p := torchCUDA.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+var torchProbeOnce sync.Once
+
+// startTorchProbe imports torch once, in the background.
+func startTorchProbe() {
+	torchProbeOnce.Do(func() {
+		go func() {
+			if v := detectTorchCUDA(); v != "" {
+				torchCUDA.Store(&v)
+			}
+		}()
+	})
+}

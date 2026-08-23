@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestHybridModelsGetNeitherPrefixCachingNorFP8KV covers the launch failure on
@@ -136,5 +137,37 @@ func TestHFTransferIsDisabledWhenMissing(t *testing.T) {
 	}
 	if !strings.Contains(joined, "HF_HUB_ENABLE_HF_TRANSFER=0") {
 		t.Errorf("hf_transfer is not installed and the variable was left set: %v", env)
+	}
+}
+
+// TestNodeInfoNeverBlocksOnPython pins the constraint that made a working node
+// report as unreachable. /v1/node/info is polled by the gateway with a short
+// timeout; asking vLLM for its model registry imports the entire library,
+// which takes seconds from a local disk and much longer from a venv on a
+// network filesystem. Doing that inside the handler produced:
+//
+//	node gpu-a unreachable: context deadline exceeded
+//
+// Both probes must answer instantly from cache, empty until they are ready.
+func TestNodeInfoNeverBlocksOnPython(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		_ = SupportedArchs()
+		_ = TorchCUDA()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("reading the cached probes blocked; /v1/node/info would time out")
+	}
+
+	// Nothing has populated them, so both report "unknown" rather than a
+	// definite empty answer that callers would act on.
+	if got := SupportedArchs(); got != nil {
+		t.Errorf("SupportedArchs = %v before detection, want nil", got)
+	}
+	if got := TorchCUDA(); got != "" {
+		t.Errorf("TorchCUDA = %q before detection, want empty", got)
 	}
 }

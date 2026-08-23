@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -240,22 +241,35 @@ func EngineAvailable(engine string, rt Runtime) bool {
 	return false
 }
 
-// SupportedArchs asks the installed vLLM which model architectures it can
-// serve.
+// supportedArchs caches what the installed vLLM can serve. Empty means "not
+// known yet", never "nothing supported".
+var supportedArchs atomic.Pointer[[]string]
+
+// SupportedArchs returns the cached architecture list without blocking.
 //
-// This is the single most useful thing to know before an install, and the
-// hardest to infer: a checkpoint's architecture is in its config.json, and
-// whether the engine implements it depends on the exact vLLM release. Getting
-// it wrong costs five restart attempts and a traceback whose real cause --
-// "Transformers does not recognize this architecture" -- is buried dozens of
-// frames above the line that gets reported. The registry answers it exactly.
+// It must not block: this is read while answering /v1/node/info, which the
+// gateway polls with a short timeout. Importing vLLM to ask its registry takes
+// seconds on a local disk and far longer from a venv on a network filesystem,
+// and doing that inside the handler made the whole node look unreachable:
 //
-// Resolved once: importing vLLM takes several seconds, and the answer cannot
-// change while the agent is running.
-var SupportedArchs = sync.OnceValue(func() []string {
-	ctx, cancel := execTimeout(120 * time.Second)
-	defer cancel()
-	const script = `
+//	node gpu-a unreachable: context deadline exceeded
+//
+// StartArchDetection populates it in the background instead.
+func SupportedArchs() []string {
+	if p := supportedArchs.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// StartArchDetection asks vLLM for its model registry once, in the background.
+// Callers see an empty list until it answers, which they already treat as
+// "could not determine" rather than as a refusal.
+func StartArchDetection() {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		const script = `
 import json, sys
 try:
     from vllm.model_executor.models.registry import ModelRegistry
@@ -263,15 +277,16 @@ try:
 except Exception:
     sys.stdout.write("[]")
 `
-	for _, py := range []string{"python3", "python"} {
-		out, err := exec.CommandContext(ctx, py, "-c", script).Output()
-		if err != nil {
-			continue
+		for _, py := range []string{"python3", "python"} {
+			out, err := exec.CommandContext(ctx, py, "-c", script).Output()
+			if err != nil {
+				continue
+			}
+			var archs []string
+			if json.Unmarshal(out, &archs) == nil && len(archs) > 0 {
+				supportedArchs.Store(&archs)
+				return
+			}
 		}
-		var archs []string
-		if json.Unmarshal(out, &archs) == nil && len(archs) > 0 {
-			return archs
-		}
-	}
-	return nil
-})
+	}()
+}

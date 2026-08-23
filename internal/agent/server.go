@@ -72,6 +72,10 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	// are re-probed rather than served from the boot-time snapshot.
 	node := s.Node
 	node.DiskFreeBytes = detectDiskFree(dataDirOf(s.Sup))
+	// Filled in by a background probe; empty until it answers.
+	if v := TorchCUDA(); v != "" {
+		node.TorchCUDA = v
+	}
 	if gpus := detectGPUs(); len(gpus) > 0 {
 		node.GPUs = gpus
 	}
