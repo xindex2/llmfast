@@ -29,6 +29,12 @@ GO_VERSION="${GO_VERSION:-1.24.5}"
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
+# Resolve where this script lives BEFORE anything changes the working
+# directory. Invoked as "bash scripts/setup-pod.sh" from inside the checkout,
+# $0 is relative, so resolving it after the cd below looked for
+# /workspace/scripts and failed with "cd: scripts: No such file or directory".
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
 # /workspace is the persistent volume on RunPod. Everything lives there so a
 # pod restart does not throw away the weights, which is the slow part.
 if [ ! -d "$WORKDIR" ]; then
@@ -45,7 +51,6 @@ apt-get install -y -qq git curl ca-certificates >/dev/null
 say "llmfast binaries"
 REPO="$WORKDIR/llmfast"
 # If this script is being run from inside a checkout, use that one.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 if [ -f "$SCRIPT_DIR/../go.mod" ]; then
   REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
   echo "using the checkout this script came from: $REPO"
