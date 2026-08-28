@@ -81,17 +81,37 @@ func TestBenchNoteIgnoresLevelsThatShedLoad(t *testing.T) {
 	}
 
 	note := benchNote(r)
-	if strings.Contains(note, "max_concurrency near 8") {
-		t.Errorf("recommended the level that shed load: %s", note)
-	}
-	if !strings.Contains(note, "near 4") {
-		t.Errorf("note = %q, want a recommendation of 4", note)
+	if strings.Contains(note, "near 8") || strings.Contains(note, "near 16") {
+		t.Errorf("recommended a level that shed load: %s", note)
 	}
 	if !strings.Contains(note, "returned errors") {
 		t.Errorf("note = %q, want the errors called out", note)
 	}
 	if !strings.Contains(note, "--parallel") {
 		t.Errorf("note = %q, want the engine slot limit named", note)
+	}
+}
+
+// TestBenchNoteFlagsABadConcurrencyTrade: on a CPU node, going from 1 to 4
+// concurrent bought 4% more aggregate throughput and cost 3.3x per-request.
+// OpenRouter ranks on per-request, so that is worth saying out loud rather
+// than leaving in two columns of a table.
+func TestBenchNoteFlagsABadConcurrencyTrade(t *testing.T) {
+	r := BenchResult{Levels: []BenchLevel{
+		{Concurrency: 1, AggregateTPS: 52, PerRequestTPS: 55.5, Errors: 0},
+		{Concurrency: 4, AggregateTPS: 54, PerRequestTPS: 16.7, Errors: 0},
+	}}
+	for _, lv := range r.Levels {
+		if lv.Errors == 0 && lv.AggregateTPS >= r.PeakAggregate {
+			r.PeakAggregate, r.BestConcurrency = lv.AggregateTPS, lv.Concurrency
+		}
+	}
+	note := benchNote(r)
+	if !strings.Contains(note, "buys almost nothing") {
+		t.Errorf("note = %q, want the per-request cost called out", note)
+	}
+	if !strings.Contains(note, "3.3x") {
+		t.Errorf("note = %q, want the ratio quantified", note)
 	}
 }
 
