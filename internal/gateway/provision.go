@@ -236,6 +236,27 @@ func (s *Server) adminInstall(w http.ResponseWriter, r *http.Request) {
 	// that make it exit, which is exactly what happened: the plan card showed
 	// the model was hybrid while the install it produced still asked for
 	// prefix caching.
+	// A GGUF repository publishes a fixed set of quantizations, and the plan's
+	// choice is only a preference. Asking for one that is not there makes
+	// llama.cpp fail with "no GGUF files found in repository", which reads as
+	// though the repository were empty.
+	if req.Engine == "llamacpp" && req.GGUFRepo != "" && req.LocalGGUF == "" {
+		if cands, err := s.hf.ResolveGGUF(ctx, req.HFID); err == nil {
+			for _, c := range cands {
+				if c.Repo != req.GGUFRepo {
+					continue
+				}
+				if picked := c.PickQuant(req.Quantization); picked != req.Quantization {
+					s.log.Info("quantization adjusted to what the repository publishes",
+						"repo", c.Repo, "asked", req.Quantization, "using", picked,
+						"available", c.Quants)
+					req.Quantization = picked
+				}
+				break
+			}
+		}
+	}
+
 	if info, err := s.hf.Fetch(ctx, req.HFID); err == nil {
 		if info.LocalGGUF != "" && req.LocalGGUF == "" {
 			req.LocalGGUF = info.LocalGGUF

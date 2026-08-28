@@ -878,9 +878,10 @@ function renderInspectResult(d) {
     <div class="step">
       <h3>GGUF conversion</h3>
       <p class="hint">llama.cpp cannot read the original weights, so a CPU node needs a converted repo.
-         The model owner's own conversion is listed first.</p>
+         The model owner's own conversion is listed first, with the quantizations each one publishes.
+         If the plan's choice is not among them, the closest smaller one is used instead.</p>
       <select id="f-gguf" style="min-width:340px">
-        ${d.gguf_candidates.map(g => `<option value="${esc(g.repo)}">${esc(g.repo)}${g.official ? '  (official)' : ''} — ${fmtNum(g.downloads)} downloads</option>`).join('')}
+        ${d.gguf_candidates.map(g => `<option value="${esc(g.repo)}">${esc(g.repo)}${g.official ? '  (official)' : ''} — ${fmtNum(g.downloads)} downloads${g.quants && g.quants.length ? ` · ${g.quants.slice(0, 6).join(', ')}` : ''}</option>`).join('')}
       </select>
     </div>` : (d.gguf_error ? `<div class="step"><div class="note warn">${esc(d.gguf_error)}</div></div>` : '')}
 

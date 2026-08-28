@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -344,13 +345,100 @@ func FormatParams(n int64) string {
 }
 
 // GGUFCandidate is a GGUF conversion of a model, as published by the community.
+// ggufQuantOrder is the preference order when a requested quantization is not
+// published. Smaller first: on the CPU nodes that need GGUF at all, memory
+// bandwidth is the binding constraint, so a smaller file is faster as well as
+// smaller.
+var ggufQuantOrder = []string{"q4_k_m", "q4_k_s", "q4_0", "q5_k_m", "q5_0", "q6_k", "q8_0", "f16", "bf16"}
+
 type GGUFCandidate struct {
 	Repo      string `json:"repo"`
 	Downloads int64  `json:"downloads"`
 	Official  bool   `json:"official"`
+	// Quants lists the quantizations this repository actually publishes, read
+	// from its file listing. Without it the planner picks a format the repo
+	// may not have -- and llama.cpp only discovers that after downloading
+	// nothing and failing with "no GGUF files found in repository".
+	Quants []string `json:"quants,omitempty"`
 	// exact marks a repo named exactly "<model>-GGUF", the conventional name
 	// for a straight conversion with nothing else changed.
 	exact bool
+}
+
+// PickQuant returns the published quantization closest to the one asked for,
+// preferring smaller when the exact match is absent.
+func (g GGUFCandidate) PickQuant(want string) string {
+	if len(g.Quants) == 0 {
+		return want // nothing known; let the engine try
+	}
+	has := func(q string) bool {
+		for _, v := range g.Quants {
+			if strings.EqualFold(v, q) {
+				return v != ""
+			}
+		}
+		return false
+	}
+	if want != "" && has(want) {
+		return want
+	}
+	for _, q := range ggufQuantOrder {
+		if has(q) {
+			return q
+		}
+	}
+	return g.Quants[0]
+}
+
+// quantsInRepo reads a GGUF repository's file listing and extracts the
+// quantization tag from each filename: "Qwen3-0.6B-Q8_0.gguf" -> "q8_0".
+func (c *Client) quantsInRepo(ctx context.Context, repo string) []string {
+	var meta struct {
+		Siblings []struct {
+			Filename string `json:"rfilename"`
+		} `json:"siblings"`
+	}
+	if err := c.getJSON(ctx, hfAPI+"/api/models/"+repo, &meta); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range meta.Siblings {
+		if q := quantFromFilename(f.Filename); q != "" && !seen[q] {
+			seen[q] = true
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+// quantTagPattern matches the quantization component of a GGUF filename.
+//
+// The digit must follow the q immediately. Without that anchor "Qwen3" reads
+// as a quantization -- q, then a digit later in the word -- and every file in
+// a Qwen repository is tagged "qwen3".
+var quantTagPattern = regexp.MustCompile(`(?i)(^|[-_.])(bf16|f16|f32|i?q\d+(?:_[a-z0-9]+)*)([-_.]|$)`)
+
+// quantFromFilename returns the last quantization tag in a GGUF filename, or
+// "" if it is not a GGUF. The last one wins because the model name comes first
+// and multi-part suffixes like "-00001-of-00003" come after.
+func quantFromFilename(name string) string {
+	if !strings.HasSuffix(strings.ToLower(name), ".gguf") {
+		return ""
+	}
+	base := strings.TrimSuffix(filepath.Base(name), ".gguf")
+	base = strings.TrimSuffix(base, ".GGUF")
+	// Drop a shard suffix so it is not mistaken for part of the tag.
+	if i := strings.Index(strings.ToLower(base), "-of-"); i > 0 {
+		if j := strings.LastIndex(base[:i], "-"); j > 0 {
+			base = base[:j]
+		}
+	}
+	m := quantTagPattern.FindAllStringSubmatch(base, -1)
+	if len(m) == 0 {
+		return ""
+	}
+	return strings.ToLower(m[len(m)-1][2])
 }
 
 // ResolveGGUF finds GGUF conversions of a model for llama.cpp.
@@ -402,6 +490,14 @@ func (c *Client) ResolveGGUF(ctx context.Context, id string) ([]GGUFCandidate, e
 	}
 	// Exact conversions first, then the owner's own, then by popularity.
 	sortCandidates(out)
+	// Read the file listing for the few we would actually offer. A repository
+	// that publishes only Q8_0 must not be handed a q4_k_m request.
+	for i := range out {
+		if i >= 5 {
+			break
+		}
+		out[i].Quants = c.quantsInRepo(ctx, out[i].Repo)
+	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no GGUF conversion found for %s; llama.cpp needs one, "+
 			"or use a GPU node with vLLM which reads the original weights", id)
