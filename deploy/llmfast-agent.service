@@ -6,14 +6,15 @@ Wants=network-online.target
 
 [Service]
 Type=exec
-User=llmfast
-Group=llmfast
-ExecStart=/opt/llmfast/llmfast-agent \
-  -listen 10.0.0.11:9900 \
-  -name gpu-a \
-  -state-dir /var/lib/llmfast-agent \
-  -mode docker
-EnvironmentFile=/etc/llmfast/agent.env
+User=__USER__
+Group=__USER__
+ExecStart=__PREFIX__/llmfast-agent \
+  -listen 127.0.0.1:9900 \
+  -name cpu-a \
+  -state-dir __AGENTDIR__ \
+  -hf-cache __AGENTDIR__/hf \
+  -mode native
+EnvironmentFile=__CONFDIR__/agent.env
 
 KillSignal=SIGTERM
 # Long enough for engines to shut down cleanly and release GPU memory. A
@@ -29,10 +30,15 @@ LimitNOFILE=65535
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/var/lib/llmfast-agent
+ReadWritePaths=__AGENTDIR__
 # Deliberately NOT sandboxed as tightly as the gateway: this process launches
 # inference engines, which need GPU devices, large shared memory and, in docker
 # mode, the container socket.
+
+# An engine is a long-lived process holding the whole model resident. Without
+# this, the OOM killer picks the largest RSS on the box -- which is always the
+# engine -- and a memory spike anywhere kills the model rather than the culprit.
+OOMScoreAdjust=-500
 
 [Install]
 WantedBy=multi-user.target

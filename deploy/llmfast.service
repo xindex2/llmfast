@@ -6,10 +6,10 @@ Wants=network-online.target
 
 [Service]
 Type=exec
-User=llmfast
-Group=llmfast
-ExecStart=/opt/llmfast/llmfast -config /etc/llmfast/config.yaml
-EnvironmentFile=/etc/llmfast/env
+User=__USER__
+Group=__USER__
+ExecStart=__PREFIX__/llmfast -config __CONFDIR__/config.yaml
+EnvironmentFile=__CONFDIR__/env
 
 # SIGHUP reloads models and pricing in place; systemctl reload sends it.
 ExecReload=/bin/kill -HUP $MAINPID
@@ -29,7 +29,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/llmfast
+ReadWritePaths=__STATEDIR__
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

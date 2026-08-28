@@ -558,6 +558,18 @@ cd /workspace/llmfast && git pull && make build
 bash scripts/llmfast.sh restart
 ```
 
+### Running on a dedicated server instead
+
+A always-on Linux box with no GPU is a different deployment: systemd rather
+than a launcher script, a service account, a reverse proxy for TLS, and
+llama.cpp instead of vLLM. [docs/dedicated-server.md](docs/dedicated-server.md)
+covers it, including what CPU-only hardware can realistically serve and whether
+it pays.
+
+```bash
+sudo bash scripts/setup-server.sh
+```
+
 ### When to add a VPS
 
 Not yet. Add a small always-on box (~$5/month, same region as the GPU) once you
