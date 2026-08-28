@@ -1,4 +1,12 @@
 [Unit]
+# A config that will not parse fails identically every time. Without a limit
+# systemd retries it hundreds of times and buries the one useful line in the
+# journal; with one it stops and leaves the service visibly failed.
+#
+# These live in [Unit], not [Service]: systemd before 249 ignores them there
+# and warns, which is noise in the journal and no limit in practice.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 Description=LLMFast inference node agent
 Documentation=https://github.com/llmfast/gateway
 After=network-online.target
@@ -23,8 +31,6 @@ TimeoutStopSec=90
 
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # Weight downloads and many concurrent engine connections.
 LimitNOFILE=65535

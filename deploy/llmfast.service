@@ -1,4 +1,12 @@
 [Unit]
+# A config that will not parse fails identically every time. Without a limit
+# systemd retries it hundreds of times and buries the one useful line in the
+# journal; with one it stops and leaves the service visibly failed.
+#
+# These live in [Unit], not [Service]: systemd before 249 ignores them there
+# and warns, which is noise in the journal and no limit in practice.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 Description=LLMFast inference gateway
 Documentation=https://github.com/llmfast/gateway
 After=network-online.target
@@ -20,11 +28,6 @@ TimeoutStopSec=45
 
 Restart=always
 RestartSec=2
-# A config that will not parse fails identically every time. Without a limit
-# systemd retries it hundreds of times and buries the one useful line in the
-# journal; with one it stops and leaves the service visibly failed.
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # Streaming holds one connection per in-flight request in each direction, plus
 # the pooled upstream connections. The default 1024 is far too low.

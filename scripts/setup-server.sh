@@ -208,22 +208,34 @@ cat > /etc/logrotate.d/llmfast <<'LOGEOF'
 LOGEOF
 
 say "Done"
+# Read the ports back out of the config rather than assuming them: they are
+# routinely changed to avoid a clash, and printing the defaults sends the
+# operator to a port nothing is listening on.
+API_ADDR=$(sed -nE 's/^[[:space:]]*listen:[[:space:]]*"?([^"]+)"?.*/\1/p' "$CONFDIR/config.yaml" | head -1)
+ADM_ADDR=$(sed -nE 's/^[[:space:]]*admin_listen:[[:space:]]*"?([^"]+)"?.*/\1/p' "$CONFDIR/config.yaml" | head -1)
+PUB_URL=$(sed -nE 's/^[[:space:]]*public_url:[[:space:]]*"?([^"# ]+)"?.*/\1/p' "$CONFDIR/config.yaml" | head -1)
+
 cat <<NEXT
+
+  API   listening on ${API_ADDR:-unknown}
+  Admin listening on ${ADM_ADDR:-unknown}
 
   Admin token:
     sudo grep LLMFAST_ADMIN_TOKEN $CONFDIR/env
 
-  Reach the admin UI from your own machine (it is not exposed):
-    ssh -L 8090:127.0.0.1:8090 root@this-server
-    then open http://localhost:8090
+  The admin listener is on localhost. Reach it either by putting a reverse
+  proxy with TLS in front of it, or from your own machine with:
+    ssh -L ${ADM_ADDR##*:}:${ADM_ADDR} root@$(hostname -f 2>/dev/null || hostname)
 
   Service control:
     systemctl status llmfast llmfast-agent
     journalctl -u llmfast -f
     systemctl reload llmfast          # re-read models without dropping streams
 
-  Before publishing, set public_url in $CONFDIR/config.yaml and put a
-  reverse proxy or Cloudflare tunnel in front of 127.0.0.1:8080.
-  See docs/dedicated-server.md.
-
 NEXT
+
+if [ "${PUB_URL:-}" = "https://api.example.com" ] || [ -z "${PUB_URL:-}" ]; then
+  warn "public_url is still the placeholder. OpenRouter reads it to find your"
+  warn "  endpoint, so set it in $CONFDIR/config.yaml before publishing."
+fi
+echo
