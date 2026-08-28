@@ -1,6 +1,9 @@
 package modelspec
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -1205,5 +1208,67 @@ func TestGraceBlackwellIsNotAmpere(t *testing.T) {
 		if bw, known := gpuBandwidthGBs(name); !known || bw > 400 {
 			t.Errorf("%s bandwidth = %v (known=%v); LPDDR5X is ~273 GB/s", name, bw, known)
 		}
+	}
+}
+
+// TestLocalCheckpointIsPlannedLikeAPublishedOne: a directory on disk carries
+// the same config.json a repository does, so it can be planned identically.
+// This matters for a checkpoint that was fine-tuned or converted locally and
+// never uploaded -- previously the only way in was a HuggingFace id.
+func TestLocalCheckpointIsPlannedLikeAPublishedOne(t *testing.T) {
+	dir := t.TempDir()
+	cfg := `{"architectures":["Qwen3ForCausalLM"],"hidden_size":1024,
+	  "num_hidden_layers":28,"num_attention_heads":16,"num_key_value_heads":8,
+	  "head_dim":128,"max_position_embeddings":40960,"vocab_size":151936,
+	  "torch_dtype":"bfloat16"}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 1.5GB of weights at bf16 is roughly 0.75B parameters.
+	if err := os.WriteFile(filepath.Join(dir, "model.safetensors"), make([]byte, 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A cache file left by another tool must not be counted as weights.
+	if err := os.WriteFile(filepath.Join(dir, ".other-cache.bin"), make([]byte, 8<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := NewClient("").Fetch(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Local {
+		t.Error("checkpoint from disk not marked local")
+	}
+	if info.Architecture != "Qwen3ForCausalLM" || info.NumLayers != 28 || info.NumKVHeads != 8 {
+		t.Errorf("geometry not read from config.json: %+v", info)
+	}
+	// 1 MiB of weights at 2 bytes each; the 8 MiB dotfile must be excluded.
+	if want := int64((1 << 20) / 2); info.Params != want {
+		t.Errorf("params = %d, want %d (dotfiles must not count)", info.Params, want)
+	}
+
+	// A machine with no GPU plans llama.cpp, and needs a GGUF it does not have.
+	cpu := &Node{Name: "mac", CPUCores: 8, RAMBytes: 16 << 30,
+		DiskFreeBytes: 100 << 30, MemBandwidthGBs: 25}
+	p := PlanFor(info, cpu, 4096)
+	if p.Engine != "llamacpp" {
+		t.Errorf("engine = %q on a GPU-less node, want llamacpp", p.Engine)
+	}
+	if info.LocalGGUF != "" {
+		t.Error("no .gguf in the directory, so none should be reported")
+	}
+
+	// Drop one in and it is found, which is what lets llama.cpp serve it
+	// with -m rather than downloading a conversion.
+	if err := os.WriteFile(filepath.Join(dir, "model-q4.gguf"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info2, err := NewClient("").Fetch(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info2.LocalGGUF != filepath.Join(dir, "model-q4.gguf") {
+		t.Errorf("LocalGGUF = %q, want the file in the directory", info2.LocalGGUF)
 	}
 }

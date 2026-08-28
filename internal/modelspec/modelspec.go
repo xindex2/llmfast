@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -50,6 +52,11 @@ type Info struct {
 	// the full-attention layers hold a per-token KV cache, and vLLM cannot
 	// store that cache at fp8 for these models.
 	IsHybrid bool `json:"is_hybrid"`
+	// Local marks a checkpoint read from this machine's filesystem rather than
+	// from HuggingFace. LocalGGUF is set when the directory already holds a
+	// GGUF, which llama.cpp can serve directly with no conversion.
+	Local     bool   `json:"local,omitempty"`
+	LocalGGUF string `json:"local_gguf,omitempty"`
 	// FullAttentionLayers is how many layers actually keep a KV cache. It
 	// equals NumLayers on an ordinary transformer.
 	FullAttentionLayers int `json:"full_attention_layers"`
@@ -180,9 +187,16 @@ func NewClient(token string) *Client {
 
 // Fetch resolves a HuggingFace model id into an Info.
 func (c *Client) Fetch(ctx context.Context, id string) (*Info, error) {
-	id = strings.Trim(strings.TrimSpace(id), "/")
+	id = strings.TrimSpace(id)
+	// A model already on disk is described by the same config.json, so it can
+	// be planned exactly like a published one -- useful for a checkpoint that
+	// was converted or fine-tuned locally and never uploaded.
+	if IsLocalPath(id) {
+		return fetchLocal(id)
+	}
+	id = strings.Trim(id, "/")
 	if id == "" || strings.Count(id, "/") != 1 {
-		return nil, fmt.Errorf("model id must be in owner/name form, got %q", id)
+		return nil, fmt.Errorf("model id must be in owner/name form or an absolute path, got %q", id)
 	}
 
 	var meta hfModelResponse
@@ -652,4 +666,115 @@ func (c *hfConfig) attentionLayout() (full int, hybrid bool) {
 		return c.NumLayers, true
 	}
 	return c.NumLayers, false
+}
+
+// IsLocalPath reports whether a model id names a directory on this machine
+// rather than a HuggingFace repository.
+func IsLocalPath(id string) bool {
+	return strings.HasPrefix(id, "/") || strings.HasPrefix(id, "./") || strings.HasPrefix(id, "~/")
+}
+
+// fetchLocal reads a checkpoint directory the same way Fetch reads a
+// repository: config.json for the geometry, and the weight files for the size.
+func fetchLocal(dir string) (*Info, error) {
+	if strings.HasPrefix(dir, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			dir = filepath.Join(home, dir[2:])
+		}
+	}
+	st, err := os.Stat(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", dir, err)
+	}
+	if !st.IsDir() {
+		return nil, fmt.Errorf("%s is a file; point at the directory holding config.json", dir)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		return nil, fmt.Errorf("no config.json in %s: %w", dir, err)
+	}
+	var cfgRaw hfConfig
+	if err := json.Unmarshal(raw, &cfgRaw); err != nil {
+		return nil, fmt.Errorf("parse config.json in %s: %w", dir, err)
+	}
+	cfg := *cfgRaw.languageConfig()
+	if cfg.QuantizationConfig == nil {
+		cfg.QuantizationConfig = cfgRaw.QuantizationConfig
+	}
+
+	info := &Info{
+		ID:           dir,
+		Local:        true,
+		MaxPositions: cfg.MaxPositions,
+		HiddenSize:   cfg.HiddenSize,
+		NumLayers:    cfg.NumLayers,
+		NumHeads:     cfg.NumHeads,
+		NumKVHeads:   cfg.NumKVHeads,
+		HeadDim:      cfg.HeadDim,
+		VocabSize:    cfg.VocabSize,
+		DType:        cfg.TorchDType,
+	}
+	if len(cfgRaw.Architectures) > 0 {
+		info.Architecture = cfgRaw.Architectures[0]
+	} else if len(cfg.Architectures) > 0 {
+		info.Architecture = cfg.Architectures[0]
+	}
+	info.HasVision = cfgRaw.VisionConfig != nil
+	info.HasAudio = cfgRaw.AudioConfig != nil
+	if info.NumKVHeads == 0 {
+		info.NumKVHeads = cfg.NumHeads
+	}
+	if info.HeadDim == 0 && cfg.NumHeads > 0 {
+		info.HeadDim = cfg.HiddenSize / cfg.NumHeads
+	}
+	info.IsMoE = cfg.routedExperts() > 0
+	info.IsMLA = cfg.QLoRARank > 0 || cfg.KVLoRARank > 0
+	info.FullAttentionLayers, info.IsHybrid = cfgRaw.attentionLayout()
+	if cfg.QuantizationConfig != nil {
+		info.PublishedQuant = cfg.QuantizationConfig.scheme()
+	}
+
+	// There is no safetensors index to read a parameter count from, so it is
+	// derived from what the weight files actually occupy. That is the honest
+	// number anyway: it is the bytes that have to reach VRAM.
+	var bytes int64
+	var gguf string
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		switch {
+		case strings.HasSuffix(n, ".safetensors"), strings.HasSuffix(n, ".bin"):
+			if strings.HasPrefix(n, ".") {
+				continue // a cache file left by some other tool
+			}
+			if fi, err := e.Info(); err == nil {
+				bytes += fi.Size()
+			}
+		case strings.HasSuffix(n, ".gguf"):
+			gguf = filepath.Join(dir, n)
+		}
+	}
+	info.LocalGGUF = gguf
+	perParam := quantBytesForDType(info.DType)
+	if bytes > 0 {
+		info.Params = int64(float64(bytes) / perParam)
+	}
+	info.ActiveParams = info.Params
+	return info, nil
+}
+
+// quantBytesForDType maps a checkpoint's declared dtype to bytes per parameter,
+// so a directory's size on disk can be turned back into a parameter count.
+func quantBytesForDType(d string) float64 {
+	switch strings.ToLower(d) {
+	case "float32", "f32":
+		return 4
+	case "float8_e4m3fn", "f8_e4m3":
+		return 1
+	}
+	return 2 // bfloat16 and float16, which is nearly everything
 }

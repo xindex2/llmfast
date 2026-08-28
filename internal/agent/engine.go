@@ -47,6 +47,10 @@ type Spec struct {
 
 	// GGUFRepo overrides the auto-resolved GGUF repository for llama.cpp.
 	GGUFRepo string `json:"gguf_repo,omitempty"`
+	// LocalGGUF is a .gguf file already on this machine. It takes precedence
+	// over GGUFRepo: a checkpoint that was converted or fine-tuned locally has
+	// no repository to download from.
+	LocalGGUF string `json:"local_gguf,omitempty"`
 	// ExtraArgs are appended verbatim, for tuning we do not model.
 	ExtraArgs []string `json:"extra_args,omitempty"`
 }
@@ -187,25 +191,31 @@ var hfTransferInstalled = sync.OnceValue(func() bool {
 })
 
 func buildLlamaCpp(s Spec, rt Runtime, port int) (string, []string, []string, error) {
-	repo := s.GGUFRepo
-	if repo == "" {
-		return "", nil, nil, fmt.Errorf("llama.cpp needs a GGUF repository; none was resolved for %q", s.HFID)
-	}
 	quant := s.Quantization
 	if quant == "" {
 		quant = "Q4_K_M"
 	}
-	args := []string{
+	var source []string
+	switch {
+	case s.LocalGGUF != "":
+		// Already on disk, so nothing to download and nothing to resolve.
+		source = []string{"-m", s.LocalGGUF}
+	case s.GGUFRepo != "":
 		// -hf downloads the GGUF straight from HuggingFace, which is what makes
 		// a CPU install genuinely one step.
-		"-hf", repo + ":" + quant,
+		source = []string{"-hf", s.GGUFRepo + ":" + quant}
+	default:
+		return "", nil, nil, fmt.Errorf(
+			"llama.cpp needs a GGUF: none was resolved for %q, and no local .gguf was given", s.HFID)
+	}
+	args := append(source,
 		"--port", strconv.Itoa(port),
 		"--host", "0.0.0.0",
 		"--alias", s.ServedName,
 		// Continuous batching, so concurrent requests share the process rather
 		// than serialising.
 		"--cont-batching",
-	}
+	)
 	if s.MaxModelLen > 0 {
 		args = append(args, "-c", strconv.Itoa(s.MaxModelLen))
 	}

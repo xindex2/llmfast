@@ -32,3 +32,26 @@ func TestShellIsNeverCached(t *testing.T) {
 		t.Error("app.js lost its ETag")
 	}
 }
+
+// TestLocalCheckpointGetsASensibleID: a checkpoint loaded from disk arrives
+// with a filesystem path where a repository id belongs. Publishing that as the
+// model id would leak the machine's directory layout to every caller and read
+// as nonsense in an API response.
+func TestLocalCheckpointGetsASensibleID(t *testing.T) {
+	cases := map[string]struct{ id, name string }{
+		"/Users/pro/Desktop/llmfffff2/models/qwen3-0.6b": {"local/qwen3-0.6b", "qwen3-0.6b"},
+		"/srv/checkpoints/my-finetune/":                  {"local/my-finetune", "my-finetune"},
+	}
+	for path, want := range cases {
+		if got := SuggestModelID(path); got != want.id {
+			t.Errorf("SuggestModelID(%q) = %q, want %q", path, got, want.id)
+		}
+		if got := SuggestDisplayName(path); got != want.name {
+			t.Errorf("SuggestDisplayName(%q) = %q, want %q", path, got, want.name)
+		}
+	}
+	// Repository ids are untouched.
+	if got := SuggestModelID("Qwen/Qwen3-8B"); got != "qwen/qwen3-8b" {
+		t.Errorf("repo id changed: %q", got)
+	}
+}

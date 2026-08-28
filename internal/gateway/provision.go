@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -98,7 +99,7 @@ func (s *Server) adminInspect(w http.ResponseWriter, r *http.Request) {
 		np.Hardware = &hw
 		np.Engines = st.Info.EnginesAvailable
 		np.Plan = modelspec.PlanFor(info, &hw, body.Context)
-		if np.Plan.Engine == "llamacpp" {
+		if np.Plan.Engine == "llamacpp" && !info.Local {
 			needGGUF = true
 		}
 		if np.Plan.NeedsQuantized {
@@ -183,6 +184,7 @@ type InstallRequest struct {
 	MaxModelLen    int    `json:"max_model_len"`
 	MaxNumSeqs     int    `json:"max_num_seqs"`
 	GGUFRepo       string `json:"gguf_repo,omitempty"`
+	LocalGGUF      string `json:"local_gguf,omitempty"`
 
 	PromptUSD     string `json:"prompt_usd"`
 	CompletionUSD string `json:"completion_usd"`
@@ -235,6 +237,9 @@ func (s *Server) adminInstall(w http.ResponseWriter, r *http.Request) {
 	// the model was hybrid while the install it produced still asked for
 	// prefix caching.
 	if info, err := s.hf.Fetch(ctx, req.HFID); err == nil {
+		if info.LocalGGUF != "" && req.LocalGGUF == "" {
+			req.LocalGGUF = info.LocalGGUF
+		}
 		req.Hybrid = info.IsHybrid
 		req.QuantFromCkpt = info.PublishedQuant != ""
 		if info.IsHybrid {
@@ -255,7 +260,8 @@ func (s *Server) adminInstall(w http.ResponseWriter, r *http.Request) {
 		Quantization: req.Quantization, KVCacheDType: req.KVCacheDType,
 		Hybrid: req.Hybrid, QuantFromCheckpoint: req.QuantFromCkpt,
 		TensorParallel: req.TensorParallel,
-		MaxModelLen:    req.MaxModelLen, MaxNumSeqs: req.MaxNumSeqs, GGUFRepo: req.GGUFRepo,
+		MaxModelLen:    req.MaxModelLen, MaxNumSeqs: req.MaxNumSeqs,
+		GGUFRepo: req.GGUFRepo, LocalGGUF: req.LocalGGUF,
 	}
 	out, err := s.nodes.Install(ctx, req.Node, spec)
 	if err != nil {
@@ -412,12 +418,23 @@ func (s *Server) adminNodeStop(w http.ResponseWriter, r *http.Request) {
 // SuggestModelID converts a HuggingFace id into the lowercase owner/name form
 // OpenRouter uses for model slugs.
 func SuggestModelID(hfID string) string {
-	return strings.ToLower(strings.TrimSpace(hfID))
+	id := strings.TrimSpace(hfID)
+	// A checkpoint loaded from disk has a filesystem path where a repository id
+	// would be. Publishing that as a model id would leak the directory layout
+	// of the machine and read as nonsense to anyone calling the API, so only
+	// the last path element is used.
+	if modelspec.IsLocalPath(id) {
+		return "local/" + strings.ToLower(filepath.Base(strings.TrimRight(id, "/")))
+	}
+	return strings.ToLower(id)
 }
 
 // SuggestDisplayName renders "Qwen/Qwen3-32B" as "Qwen: Qwen3 32B", matching
 // how models are labelled on OpenRouter.
 func SuggestDisplayName(hfID string) string {
+	if modelspec.IsLocalPath(hfID) {
+		return filepath.Base(strings.TrimRight(hfID, "/"))
+	}
 	owner, name, ok := strings.Cut(hfID, "/")
 	if !ok {
 		return hfID

@@ -752,7 +752,7 @@ function renderAddModel() {
       <p class="hint">Paste a HuggingFace repository id. We read its config to work out what it needs,
          then check it against each node's hardware.</p>
       <div class="row">
-        <input type="text" id="hfid" placeholder="Qwen/Qwen3-8B" spellcheck="false" autocapitalize="off">
+        <input type="text" id="hfid" placeholder="Qwen/Qwen3-8B or /path/to/checkpoint" spellcheck="false" autocapitalize="off">
         <input type="number" id="ctx" placeholder="Context (auto)" min="1024" step="1024" style="max-width:180px">
         <button class="primary" id="inspect-btn">Inspect</button>
       </div>
