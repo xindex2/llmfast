@@ -71,7 +71,7 @@ ok "$(go version)"
 say "Building"
 ( cd "$REPO" && make build )
 install -m 0755 "$REPO/dist/llmfast" "$REPO/dist/llmfast-agent" "$REPO/dist/llmplan" "$PREFIX/"
-ok "installed into $PREFIX"
+ok "installed into $PREFIX from $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'a non-git checkout')"
 
 # --------------------------------------------------------------- llama.cpp ---
 
@@ -184,7 +184,10 @@ sed -e "s|__PREFIX__|$PREFIX|g" -e "s|__CONFDIR__|$CONFDIR|g" \
     -e "s|__AGENTDIR__|$AGENTDIR|g" -e "s|__USER__|$USER_NAME|g" \
     "$REPO/deploy/llmfast-agent.service" > /etc/systemd/system/llmfast-agent.service
 systemctl daemon-reload
-systemctl enable --now llmfast-agent.service llmfast.service
+systemctl enable llmfast-agent.service llmfast.service >/dev/null
+# Restart rather than start: a rebuild that leaves the previous process running
+# is indistinguishable from a fix that did not work.
+systemctl restart llmfast-agent.service llmfast.service
 sleep 3
 for u in llmfast-agent llmfast; do
   if systemctl is-active --quiet "$u"; then ok "$u running"

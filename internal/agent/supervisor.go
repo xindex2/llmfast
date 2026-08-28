@@ -616,6 +616,9 @@ func rootCause(lines []string) string {
 			}
 		}
 	}
+	if q := missingQuantization(lines); q != "" {
+		return q
+	}
 	best, bestRank := "", len(interestingErrors)
 	for _, raw := range lines {
 		line := strings.TrimSpace(stripPIDPrefix(raw))
@@ -667,4 +670,48 @@ func lastN(lines []string, n int) []string {
 		return lines
 	}
 	return lines[len(lines)-n:]
+}
+
+// missingQuantization turns llama.cpp's "no GGUF files found in repository"
+// into something actionable.
+//
+// The message is misleading on its own: the repository is not empty, it simply
+// does not publish the quantization that was asked for. llama.cpp prints the
+// ones it does have on the following lines, so the answer is right there and
+// worth lifting into the error rather than leaving in the log.
+func missingQuantization(lines []string) string {
+	repo, listing := "", false
+	var have []string
+	for _, raw := range lines {
+		line := strings.TrimSpace(stripPIDPrefix(raw))
+		if i := strings.Index(line, "no GGUF files found in repository"); i >= 0 {
+			repo = strings.TrimSpace(line[i+len("no GGUF files found in repository"):])
+			listing = false
+			have = nil
+			continue
+		}
+		if repo == "" {
+			continue
+		}
+		if strings.Contains(line, "Available GGUF files") {
+			listing = true
+			continue
+		}
+		if listing {
+			if f := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-")); strings.HasSuffix(strings.ToLower(f), ".gguf") {
+				have = append(have, f)
+				continue
+			}
+			listing = false
+		}
+	}
+	if repo == "" {
+		return ""
+	}
+	msg := fmt.Sprintf("%s does not publish the quantization that was requested", repo)
+	if len(have) > 0 {
+		msg += ". It has: " + strings.Join(have, ", ") +
+			" -- pick a repository that offers the format you want, or install with one of these"
+	}
+	return msg
 }

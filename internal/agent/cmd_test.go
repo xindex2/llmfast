@@ -193,3 +193,28 @@ func TestBuildDefectsAreExplained(t *testing.T) {
 		t.Error("reported the consequence rather than the cause")
 	}
 }
+
+// TestMissingQuantizationIsExplained: "no GGUF files found in repository"
+// reads as though the repository were empty. It is not -- it simply does not
+// publish the quantization that was asked for, and llama.cpp prints the ones
+// it does have on the next lines. That answer belongs in the error.
+func TestMissingQuantizationIsExplained(t *testing.T) {
+	log := []string{
+		"0.00.132.792 E common_download_get_hf_plan: no GGUF files found in repository Qwen/Qwen3-0.6B-GGUF",
+		"0.00.132.798 I Available GGUF files:",
+		"0.00.132.799 I  - Qwen3-0.6B-Q8_0.gguf",
+		"0.00.135.190 I srv load_model: loading model 'Qwen/Qwen3-0.6B-GGUF:q4_k_m'",
+		"0.00.135.414 E cmn common_init_: failed to load model ''",
+	}
+	got := rootCause(log)
+	if !strings.Contains(got, "Qwen/Qwen3-0.6B-GGUF") {
+		t.Errorf("rootCause = %q, want the repository named", got)
+	}
+	if !strings.Contains(got, "Qwen3-0.6B-Q8_0.gguf") {
+		t.Errorf("rootCause = %q, want the available file listed", got)
+	}
+	// The downstream empty-model-name error is a consequence, not the cause.
+	if strings.Contains(got, "failed to load model ''") {
+		t.Error("reported the consequence rather than the cause")
+	}
+}
