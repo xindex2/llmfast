@@ -48,7 +48,11 @@ else
 fi
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0750 "$STATEDIR" "$AGENTDIR" "$STATEDIR/models.d"
 install -d -m 0755 "$PREFIX"
-install -d -m 0750 "$CONFDIR"
+# root owns the config, the service account reads it through the group. The
+# directory needs the group too: 0750 root:root would leave the files readable
+# in principle and the directory untraversable in practice, which fails as
+# "permission denied" on a file whose own mode looks correct.
+install -d -o root -g "$USER_NAME" -m 0750 "$CONFDIR"
 
 # --------------------------------------------------------------------- Go ----
 
@@ -142,6 +146,17 @@ else
 fi
 
 # ----------------------------------------------------------------- systemd ---
+
+# Correct permissions on every run: an earlier version of this script created
+# $CONFDIR as root:root, which the service account cannot traverse.
+chown root:"$USER_NAME" "$CONFDIR"
+chmod 0750 "$CONFDIR"
+for f in "$CONFDIR"/config.yaml "$CONFDIR"/env "$CONFDIR"/agent.env; do
+  [ -f "$f" ] || continue
+  chown root:"$USER_NAME" "$f"
+  chmod 0640 "$f"
+done
+ok "permissions on $CONFDIR"
 
 say "systemd units"
 sed -e "s|__PREFIX__|$PREFIX|g" -e "s|__CONFDIR__|$CONFDIR|g" \

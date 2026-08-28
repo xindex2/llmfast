@@ -23,6 +23,8 @@ TimeoutStopSec=90
 
 Restart=always
 RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 # Weight downloads and many concurrent engine connections.
 LimitNOFILE=65535
