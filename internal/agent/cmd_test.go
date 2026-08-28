@@ -171,3 +171,25 @@ func TestNodeInfoNeverBlocksOnPython(t *testing.T) {
 		t.Errorf("TorchCUDA = %q before detection, want empty", got)
 	}
 }
+
+// TestBuildDefectsAreExplained: some engine failures are defects in how the
+// binary was compiled, not problems with the model. Their log line is not an
+// exception, so the exception scan skipped it entirely and reported nothing
+// useful -- while the actual cause, that llama.cpp had been built without
+// HTTPS and could not download anything, sat in plain sight.
+func TestBuildDefectsAreExplained(t *testing.T) {
+	log := []string{
+		"E get_repo_commit: error: HTTPS is not supported. Please rebuild with one of:",
+		"W get_repo_files: failed to resolve commit for Qwen/Qwen3-0.6B-GGUF",
+		"E llama_model_load_from_file_impl: exactly one out metadata, path_model, and file must be defined",
+		"E srv load_model: failed to load model, ''",
+	}
+	got := rootCause(log)
+	if !strings.Contains(got, "libssl-dev") {
+		t.Errorf("rootCause = %q, want the build defect explained", got)
+	}
+	// The downstream "failed to load model" is a consequence, not the cause.
+	if strings.Contains(got, "exactly one out metadata") {
+		t.Error("reported the consequence rather than the cause")
+	}
+}

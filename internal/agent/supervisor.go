@@ -581,6 +581,15 @@ var uselessErrors = []string{
 // interestingErrors are the exception types worth surfacing, most specific
 // first: an out-of-memory or an unsupported-feature message tells an operator
 // what to change, where a bare RuntimeError often does not.
+// buildDefects are failures of the engine binary rather than of the model.
+// They are matched first because their line does not look like an exception
+// and would otherwise be skipped entirely.
+var buildDefects = map[string]string{
+	"HTTPS is not supported": "this llama.cpp was built without HTTPS, so it cannot download " +
+		"models: install libssl-dev and rebuild with -DLLAMA_OPENSSL=ON",
+	"CUDA error": "the engine could not use the GPU",
+}
+
 var interestingErrors = []string{
 	"torch.cuda.OutOfMemoryError",
 	"OutOfMemoryError",
@@ -600,6 +609,13 @@ var interestingErrors = []string{
 // It scans forwards, because in a chained traceback the earliest exception is
 // the one that actually happened and everything after it is a re-raise.
 func rootCause(lines []string) string {
+	for _, raw := range lines {
+		for marker, explain := range buildDefects {
+			if strings.Contains(raw, marker) {
+				return explain
+			}
+		}
+	}
 	best, bestRank := "", len(interestingErrors)
 	for _, raw := range lines {
 		line := strings.TrimSpace(stripPIDPrefix(raw))

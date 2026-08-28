@@ -32,7 +32,12 @@ warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 say "System packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates git build-essential cmake libcurl4-openssl-dev >/dev/null
+# libssl-dev is not optional: llama.cpp builds with LLAMA_OPENSSL=ON by
+# default, but silently drops HTTPS support when the headers are missing. The
+# build succeeds and then every -hf download fails at runtime with
+# "HTTPS is not supported", long after the reason has scrolled away.
+apt-get install -y -qq curl ca-certificates git build-essential cmake \
+  libcurl4-openssl-dev libssl-dev pkg-config >/dev/null
 ok "build tools"
 
 # -------------------------------------------------------------------- user ---
@@ -81,8 +86,11 @@ if [ ! -x "$PREFIX/llama-server" ] || [ "${REBUILD_LLAMA:-0}" = 1 ]; then
   else
     git clone -q --depth 1 https://github.com/ggml-org/llama.cpp.git "$SRC"
   fi
+  # -DLLAMA_OPENSSL=ON is the default, but stating it makes the build fail
+  # loudly if the headers are absent rather than quietly shipping a binary
+  # that cannot download anything.
   cmake -S "$SRC" -B "$SRC/build" -DCMAKE_BUILD_TYPE=Release \
-    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF >/dev/null
+    -DLLAMA_OPENSSL=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF >/dev/null
   cmake --build "$SRC/build" --config Release -j"$(nproc)" \
     --target llama-server llama-quantize >/dev/null
   install -m 0755 "$SRC/build/bin/llama-server" "$SRC/build/bin/llama-quantize" "$PREFIX/"
@@ -90,6 +98,16 @@ fi
 ln -sf "$PREFIX/llama-server" /usr/local/bin/llama-server
 ln -sf "$PREFIX/llama-quantize" /usr/local/bin/llama-quantize
 ok "$("$PREFIX/llama-server" --version 2>&1 | head -1)"
+
+# Prove HTTPS works before an install discovers it does not. Without this the
+# first symptom is a model that fails five times with the reason buried in the
+# engine log.
+if "$PREFIX/llama-server" -hf ggml-org/models --list-models 2>&1 | grep -qi "HTTPS is not supported"; then
+  warn "llama-server was built without HTTPS: -hf downloads will fail."
+  warn "  apt-get install -y libssl-dev && sudo REBUILD_LLAMA=1 bash $0"
+else
+  ok "HTTPS support present (-hf downloads will work)"
+fi
 
 # ------------------------------------------------------------------ config ---
 
