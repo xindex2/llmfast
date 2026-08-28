@@ -55,3 +55,54 @@ func TestLocalCheckpointGetsASensibleID(t *testing.T) {
 		t.Errorf("repo id changed: %q", got)
 	}
 }
+
+// TestBenchNoteIgnoresLevelsThatShedLoad reproduces a real measurement from a
+// CPU node whose engine had four slots. At 8 and 16 concurrent it rejected
+// half the requests -- and *reported a higher aggregate* than the levels that
+// served everything, because a rejected request finishes instantly and
+// shortens the wall clock. The note recommended max_concurrency 8, which is
+// precisely the setting that sheds load, and shed load is what OpenRouter
+// counts against uptime.
+func TestBenchNoteIgnoresLevelsThatShedLoad(t *testing.T) {
+	r := BenchResult{Levels: []BenchLevel{
+		{Concurrency: 1, AggregateTPS: 52, Errors: 0},
+		{Concurrency: 4, AggregateTPS: 54, Errors: 0},
+		{Concurrency: 8, AggregateTPS: 67, Errors: 4},
+		{Concurrency: 16, AggregateTPS: 67, Errors: 4},
+	}}
+	for _, lv := range r.Levels {
+		if lv.Errors == 0 && lv.AggregateTPS > r.PeakAggregate {
+			r.PeakAggregate, r.BestConcurrency = lv.AggregateTPS, lv.Concurrency
+		}
+	}
+	if r.BestConcurrency != 4 || r.PeakAggregate != 54 {
+		t.Fatalf("peak = %.0f at %d; only error-free levels count",
+			r.PeakAggregate, r.BestConcurrency)
+	}
+
+	note := benchNote(r)
+	if strings.Contains(note, "max_concurrency near 8") {
+		t.Errorf("recommended the level that shed load: %s", note)
+	}
+	if !strings.Contains(note, "near 4") {
+		t.Errorf("note = %q, want a recommendation of 4", note)
+	}
+	if !strings.Contains(note, "returned errors") {
+		t.Errorf("note = %q, want the errors called out", note)
+	}
+	if !strings.Contains(note, "--parallel") {
+		t.Errorf("note = %q, want the engine slot limit named", note)
+	}
+}
+
+// TestBenchNoteWhenEverythingErrors: no level is a safe setting, and saying
+// nothing would leave the operator to read a plausible-looking table.
+func TestBenchNoteWhenEverythingErrors(t *testing.T) {
+	r := BenchResult{Levels: []BenchLevel{
+		{Concurrency: 1, AggregateTPS: 20, Errors: 1},
+		{Concurrency: 4, AggregateTPS: 40, Errors: 4},
+	}}
+	if note := benchNote(r); !strings.Contains(note, "Every level returned errors") {
+		t.Errorf("note = %q", note)
+	}
+}

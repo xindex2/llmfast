@@ -188,8 +188,12 @@ func (s *Server) adminBenchmark(w http.ResponseWriter, r *http.Request) {
 		emit("level", lv)
 	}
 
+	// Only levels that served every request count. A level that rejects half
+	// its load finishes sooner and therefore *reports a higher aggregate*, so
+	// including it does not merely add noise -- it actively pulls the
+	// recommendation towards the setting that broke.
 	for _, lv := range result.Levels {
-		if lv.AggregateTPS > result.PeakAggregate {
+		if lv.Errors == 0 && lv.AggregateTPS > result.PeakAggregate {
 			result.PeakAggregate, result.BestConcurrency = lv.AggregateTPS, lv.Concurrency
 		}
 	}
@@ -281,19 +285,53 @@ func benchNote(r BenchResult) string {
 	// Within this margin of the peak counts as "no longer improving".
 	const plateau = 0.05
 
-	knee := r.Levels[len(r.Levels)-1].Concurrency
+	// A level that returned errors is not a candidate, whatever it measured.
+	// Rejected requests complete instantly, so such a level reports a *higher*
+	// aggregate than a healthy one -- recommending it would set concurrency to
+	// the exact value that sheds load, and shed load is what OpenRouter counts
+	// against uptime.
+	var clean []BenchLevel
+	var errored []BenchLevel
 	for _, lv := range r.Levels {
+		if lv.Errors == 0 {
+			clean = append(clean, lv)
+		} else {
+			errored = append(errored, lv)
+		}
+	}
+
+	var errNote string
+	if len(errored) > 0 {
+		lowest := errored[0]
+		errNote = fmt.Sprintf(
+			" Concurrency %d and above returned errors (%d at %d), so those levels are excluded: "+
+				"a rejected request finishes instantly and inflates the aggregate. The engine is "+
+				"refusing load beyond its slot count -- raise the engine's own limit (llama.cpp "+
+				"--parallel, vLLM --max-num-seqs) if you want to serve more at once.",
+			lowest.Concurrency, lowest.Errors, lowest.Concurrency)
+	}
+
+	if len(clean) == 0 {
+		return "Every level returned errors, so none is a safe setting." + errNote
+	}
+	if len(clean) < 2 {
+		return fmt.Sprintf(
+			"Only concurrency %d completed without errors (%.0f tok/s aggregate). "+
+				"Set max_concurrency to %d.%s",
+			clean[0].Concurrency, clean[0].AggregateTPS, clean[0].Concurrency, errNote)
+	}
+
+	knee := clean[len(clean)-1].Concurrency
+	for _, lv := range clean {
 		if lv.AggregateTPS >= r.PeakAggregate*(1-plateau) {
 			knee = lv.Concurrency
 			break
 		}
 	}
 
-	last := r.Levels[len(r.Levels)-1]
-	prev := r.Levels[len(r.Levels)-2]
-	stillClimbing := last.AggregateTPS > prev.AggregateTPS*(1+plateau)
-
-	if stillClimbing {
+	last := clean[len(clean)-1]
+	prev := clean[len(clean)-2]
+	if last.AggregateTPS > prev.AggregateTPS*(1+plateau) && len(errored) == 0 {
 		return fmt.Sprintf(
 			"Aggregate throughput was still climbing at %d concurrent (%.0f tok/s, up from %.0f), "+
 				"so the GPU is not yet saturated. Re-run with higher levels to find the ceiling.",
@@ -302,8 +340,8 @@ func benchNote(r BenchResult) string {
 	return fmt.Sprintf(
 		"Aggregate throughput flattened at about %d concurrent (%.0f tok/s); the peak of %.0f "+
 			"tok/s at %d is within noise of it. Set the backend's max_concurrency near %d: "+
-			"beyond the knee the GPU is saturated and extra concurrency only costs latency.",
-		knee, r.PeakAggregate, r.PeakAggregate, r.BestConcurrency, knee)
+			"beyond the knee the GPU is saturated and extra concurrency only costs latency.%s",
+		knee, r.PeakAggregate, r.PeakAggregate, r.BestConcurrency, knee, errNote)
 }
 
 // syntheticPrompt builds a prompt of roughly n tokens. English averages close
