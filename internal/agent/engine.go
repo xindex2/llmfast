@@ -57,6 +57,14 @@ type Spec struct {
 
 // Runtime is how this agent was configured to launch engines.
 type Runtime struct {
+	// EngineHost is the address engines bind to. It defaults to 0.0.0.0, which
+	// is right on a single machine where nothing else can reach the port -- and
+	// wrong the moment the box is on a public network, because an inference
+	// endpoint has no authentication of its own. Anyone who finds the port gets
+	// free use of the GPU. On a multi-node deployment this should be the
+	// private mesh address, so the gateway can reach it and nobody else can.
+	EngineHost string
+
 	// Mode is "native" (binaries on PATH) or "docker".
 	Mode string
 	// VLLMImage is used in docker mode.
@@ -92,7 +100,7 @@ func buildVLLM(s Spec, rt Runtime, port int) (string, []string, []string, error)
 		"serve", s.HFID,
 		"--served-model-name", s.ServedName,
 		"--port", strconv.Itoa(port),
-		"--host", "0.0.0.0",
+		"--host", rt.engineHost(),
 		// Without chunked prefill, one long prompt stalls every other stream on
 		// the replica and p99 TTFT collapses under mixed traffic.
 		"--enable-chunked-prefill",
@@ -212,7 +220,7 @@ func buildLlamaCpp(s Spec, rt Runtime, port int) (string, []string, []string, er
 	}
 	args := append(source,
 		"--port", strconv.Itoa(port),
-		"--host", "0.0.0.0",
+		"--host", rt.engineHost(),
 		"--alias", s.ServedName,
 		// Continuous batching, so concurrent requests share the process rather
 		// than serialising.
@@ -324,7 +332,7 @@ func buildFreeToken(s Spec, rt Runtime, port int) (string, []string, []string, e
 	args := []string{
 		"serve",
 		"--model", s.HFID,
-		"--host", "0.0.0.0",
+		"--host", rt.engineHost(),
 		"--port", strconv.Itoa(port),
 		"--served-model-name", s.ServedName,
 	}
@@ -348,4 +356,12 @@ func buildFreeToken(s Spec, rt Runtime, port int) (string, []string, []string, e
 		env = append(env, "HF_HUB_ENABLE_HF_TRANSFER=0")
 	}
 	return "ft", args, env, nil
+}
+
+// engineHost is where engines listen. 0.0.0.0 unless told otherwise.
+func (rt Runtime) engineHost() string {
+	if rt.EngineHost != "" {
+		return rt.EngineHost
+	}
+	return "0.0.0.0"
 }

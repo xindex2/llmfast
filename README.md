@@ -558,6 +558,13 @@ cd /workspace/llmfast && git pull && make build
 bash scripts/llmfast.sh restart
 ```
 
+### Adding a second GPU
+
+One gateway, many nodes: customers keep a single endpoint and dashboard while
+you add hardware behind it. [docs/multi-node.md](docs/multi-node.md) covers the
+network shape, and in particular why engine ports must never face the internet
+— they have no authentication of their own.
+
 ### Running on a dedicated server instead
 
 A always-on Linux box with no GPU is a different deployment: systemd rather

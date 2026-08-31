@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,11 +31,14 @@ var version = "dev"
 
 func main() {
 	var (
-		listen    = flag.String("listen", "0.0.0.0:9900", "control API listen address")
-		name      = flag.String("name", "", "node name as the gateway will know it (default: hostname)")
-		stateDir  = flag.String("state-dir", "/var/lib/llmfast-agent", "where instance state and logs live")
-		hfCache   = flag.String("hf-cache", "", "HuggingFace cache directory (default: <state-dir>/hf)")
-		mode      = flag.String("mode", "native", `how to launch engines: "native" or "docker"`)
+		listen     = flag.String("listen", "0.0.0.0:9900", "control API listen address")
+		name       = flag.String("name", "", "node name as the gateway will know it (default: hostname)")
+		stateDir   = flag.String("state-dir", "/var/lib/llmfast-agent", "where instance state and logs live")
+		hfCache    = flag.String("hf-cache", "", "HuggingFace cache directory (default: <state-dir>/hf)")
+		mode       = flag.String("mode", "native", `how to launch engines: "native" or "docker"`)
+		engineHost = flag.String("engine-host", "", "address engines bind to (default 0.0.0.0); "+
+			"set this to a private mesh address on a multi-node deployment, since engines "+
+			"have no authentication of their own")
 		vllmImage = flag.String("vllm-image", "vllm/vllm-openai:latest", "container image used in docker mode")
 		portBase  = flag.Int("port-base", 18000, "first port to allocate to engine processes")
 		bandwidth = flag.Float64("mem-bandwidth", 0, "memory bandwidth in GB/s; overrides estimation, matters for CPU inference")
@@ -75,6 +79,17 @@ func main() {
 		VLLMImage:  *vllmImage,
 		HFCacheDir: *hfCache,
 		HFToken:    os.Getenv("HF_TOKEN"),
+		EngineHost: *engineHost,
+	}
+
+	// An agent reachable from anywhere, launching engines that listen on
+	// everything, is an open GPU: the control API checks a token but the
+	// engines behind it check nothing at all.
+	if !isLoopback(*listen) && *engineHost == "" {
+		log.Warn("the control API is not on loopback and engines will bind 0.0.0.0; "+
+			"anyone who reaches an engine port can use this GPU for free. "+
+			"Pass -engine-host with a private address, or keep the ports off the internet",
+			"listen", *listen)
 	}
 
 	sup := agent.NewSupervisor(rt, *stateDir, *portBase,
@@ -176,4 +191,17 @@ func nvmeNote(nvme bool) string {
 		return " (NVMe)"
 	}
 	return " (no NVMe detected; weight loading will be slow)"
+}
+
+// isLoopback reports whether a listen address is confined to this machine.
+func isLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
