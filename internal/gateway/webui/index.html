@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLMFast — Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%232f5aa8'/%3E%3Cpath d='M17.5 6 9 18h6l-1.5 8 8.5-12h-6z' fill='%23faf9f5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<div id="gate" class="gate hidden">
+  <form class="gate-card" id="gate-form">
+    <div class="brand"><span class="mark"></span> LLMFast</div>
+    <h1 id="gate-title">Sign in</h1>
+    <p class="muted" id="gate-sub">Your API keys and usage live here.</p>
+    <input type="email" id="email" placeholder="Email" autocomplete="username" required>
+    <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+    <button type="submit" id="gate-go">Sign in</button>
+    <div class="err" id="gate-err"></div>
+    <p class="switch">
+      <span id="switch-text">New here?</span>
+      <a href="#" id="switch-link">Create an account</a>
+    </p>
+    <p class="switch"><a href="/">&larr; Back to llmfa.st</a></p>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header class="top">
+    <a class="brand" href="/"><span class="mark"></span> LLMFast</a>
+    <nav id="nav">
+      <button data-view="usage" class="active">Usage</button>
+      <button data-view="keys">API keys</button>
+      <button data-view="models">Models</button>
+      <button data-view="requests">Requests</button>
+      <button data-view="start">Get started</button>
+    </nav>
+    <div class="spacer"></div>
+    <select id="range" title="Time range">
+      <option value="24h" selected>Last 24 hours</option>
+      <option value="7d">Last 7 days</option>
+      <option value="30d">Last 30 days</option>
+    </select>
+    <span class="who" id="who"></span>
+    <button id="signout" class="link">Sign out</button>
+  </header>
+  <main id="main"></main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

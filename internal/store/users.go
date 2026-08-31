@@ -35,12 +35,23 @@ const SessionTTL = 12 * time.Hour
 // cannot test candidates in bulk.
 const pbkdf2Iterations = 600_000
 
+// Roles. An admin operates the service; a user buys tokens from it.
+const (
+	RoleAdmin = "admin"
+	RoleUser  = "user"
+)
+
 type AdminUser struct {
 	ID        int64  `json:"id"`
 	Email     string `json:"email"`
 	CreatedAt int64  `json:"created_at"`
 	LastLogin int64  `json:"last_login"`
+	Role      string `json:"role"`
+	Disabled  bool   `json:"disabled"`
 }
+
+// IsAdmin reports whether this account may reach the admin surface.
+func (u AdminUser) IsAdmin() bool { return u.Role == RoleAdmin }
 
 // NormalizeEmail lowercases and trims, so that an address entered with
 // different capitalisation on a later visit still signs in.
@@ -95,11 +106,47 @@ func verifyPassword(encoded, password string) bool {
 // no way to sign anyone in yet and must fall back to the configured token.
 func (s *Store) CountAdminUsers(ctx context.Context) (int, error) {
 	var n int
-	err := s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM admin_users`).Scan(&n)
+	// Operators only: a hundred customer sign-ups must not make the first-run
+	// setup form think an administrator already exists.
+	err := s.r.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM admin_users WHERE role = ?`, RoleAdmin).Scan(&n)
 	return n, err
 }
 
+// CountUsers reports how many customer accounts exist.
+func (s *Store) CountUsers(ctx context.Context) (int, error) {
+	var n int
+	err := s.r.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM admin_users WHERE role = ?`, RoleUser).Scan(&n)
+	return n, err
+}
+
+// SetAccountDisabled suspends or restores an account. Suspending it also drops
+// every session it holds, so access ends immediately rather than at expiry.
+func (s *Store) SetAccountDisabled(ctx context.Context, id int64, disabled bool) error {
+	if _, err := s.w.ExecContext(ctx,
+		`UPDATE admin_users SET disabled = ? WHERE id = ?`, b2i(disabled), id); err != nil {
+		return err
+	}
+	if !disabled {
+		return nil
+	}
+	_, err := s.w.ExecContext(ctx, `DELETE FROM admin_sessions WHERE user_id = ?`, id)
+	return err
+}
+
+// CreateAdminUser creates an operator account.
 func (s *Store) CreateAdminUser(ctx context.Context, email, password string) (AdminUser, error) {
+	return s.createAccount(ctx, email, password, RoleAdmin)
+}
+
+// CreateUser creates a customer account. Same credential handling, no access
+// to the admin surface.
+func (s *Store) CreateUser(ctx context.Context, email, password string) (AdminUser, error) {
+	return s.createAccount(ctx, email, password, RoleUser)
+}
+
+func (s *Store) createAccount(ctx context.Context, email, password, role string) (AdminUser, error) {
 	email = NormalizeEmail(email)
 	if email == "" || !strings.Contains(email, "@") {
 		return AdminUser{}, errors.New("a valid email address is required")
@@ -113,8 +160,8 @@ func (s *Store) CreateAdminUser(ctx context.Context, email, password string) (Ad
 	}
 	now := time.Now().Unix()
 	res, err := s.w.ExecContext(ctx,
-		`INSERT INTO admin_users (email, password_hash, created_at) VALUES (?,?,?)`,
-		email, hash, now)
+		`INSERT INTO admin_users (email, password_hash, created_at, role) VALUES (?,?,?,?)`,
+		email, hash, now, role)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return AdminUser{}, ErrUserExists
@@ -122,7 +169,7 @@ func (s *Store) CreateAdminUser(ctx context.Context, email, password string) (Ad
 		return AdminUser{}, err
 	}
 	id, _ := res.LastInsertId()
-	return AdminUser{ID: id, Email: email, CreatedAt: now}, nil
+	return AdminUser{ID: id, Email: email, CreatedAt: now, Role: role}, nil
 }
 
 // SetAdminPassword changes a password and invalidates every existing session
@@ -159,9 +206,12 @@ func (s *Store) VerifyAdminLogin(ctx context.Context, email, password string) (A
 	email = NormalizeEmail(email)
 	var u AdminUser
 	var hash string
+	var disabled int
 	err := s.r.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, created_at, last_login FROM admin_users WHERE email = ?`,
-		email).Scan(&u.ID, &u.Email, &hash, &u.CreatedAt, &u.LastLogin)
+		`SELECT id, email, password_hash, created_at, last_login, role, disabled
+		   FROM admin_users WHERE email = ?`,
+		email).Scan(&u.ID, &u.Email, &hash, &u.CreatedAt, &u.LastLogin, &u.Role, &disabled)
+	u.Disabled = disabled != 0
 	if errors.Is(err, sql.ErrNoRows) {
 		verifyPassword("pbkdf2-sha256$"+strconv.Itoa(pbkdf2Iterations)+
 			"$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", password)
@@ -173,6 +223,11 @@ func (s *Store) VerifyAdminLogin(ctx context.Context, email, password string) (A
 	if !verifyPassword(hash, password) {
 		return AdminUser{}, ErrBadCredential
 	}
+	// A disabled account fails as a bad credential rather than announcing that
+	// it exists and has been suspended.
+	if u.Disabled {
+		return AdminUser{}, ErrBadCredential
+	}
 	now := time.Now().Unix()
 	_, _ = s.w.ExecContext(ctx, `UPDATE admin_users SET last_login = ? WHERE id = ?`, now, u.ID)
 	u.LastLogin = now
@@ -181,7 +236,7 @@ func (s *Store) VerifyAdminLogin(ctx context.Context, email, password string) (A
 
 func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 	rows, err := s.r.QueryContext(ctx,
-		`SELECT id, email, created_at, last_login FROM admin_users ORDER BY created_at`)
+		`SELECT id, email, created_at, last_login, role, disabled FROM admin_users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -189,9 +244,11 @@ func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 	var out []AdminUser
 	for rows.Next() {
 		var u AdminUser
-		if err := rows.Scan(&u.ID, &u.Email, &u.CreatedAt, &u.LastLogin); err != nil {
+		var disabled int
+		if err := rows.Scan(&u.ID, &u.Email, &u.CreatedAt, &u.LastLogin, &u.Role, &disabled); err != nil {
 			return nil, err
 		}
+		u.Disabled = disabled != 0
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -243,11 +300,13 @@ func (s *Store) LookupSession(ctx context.Context, token string) (AdminUser, err
 		return AdminUser{}, ErrUserNotFound
 	}
 	var u AdminUser
+	var disabled int
 	err := s.r.QueryRowContext(ctx, `
-		SELECT u.id, u.email, u.created_at, u.last_login
+		SELECT u.id, u.email, u.created_at, u.last_login, u.role, u.disabled
 		  FROM admin_sessions s JOIN admin_users u ON u.id = s.user_id
-		 WHERE s.token_hash = ? AND s.expires_at > ?`,
-		HashKey(token), time.Now().Unix()).Scan(&u.ID, &u.Email, &u.CreatedAt, &u.LastLogin)
+		 WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled = 0`,
+		HashKey(token), time.Now().Unix()).Scan(&u.ID, &u.Email, &u.CreatedAt, &u.LastLogin, &u.Role, &disabled)
+	u.Disabled = disabled != 0
 	if errors.Is(err, sql.ErrNoRows) {
 		return AdminUser{}, ErrUserNotFound
 	}

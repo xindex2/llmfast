@@ -23,6 +23,9 @@ server:
   db_path: "/var/lib/llmfast/llmfast.db"
   # Models added through the admin UI are written here, one file each, so this
   # file keeps its structure and comments. Delete a file to remove that model.
+  # Static marketing pages served at the root of the public listener.
+  # Read from disk, so they can be edited without rebuilding.
+  site_dir: "site"
   model_dir: "models.d"
   # Well under OpenRouter's fetch timeout, so a long prefill or a reasoning
   # model's thinking phase is never mistaken for a hung connection.

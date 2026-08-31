@@ -63,6 +63,13 @@ type Server struct {
 	KeepAliveInterval time.Duration `yaml:"keepalive_interval"`
 	// RawRetentionDays bounds the per-request log. Rollups are kept forever.
 	RawRetentionDays int `yaml:"raw_retention_days"`
+	// SiteDir is a directory of static files served at the root of the public
+	// listener -- the marketing site. It is read from disk rather than embedded
+	// so the pages can be edited without rebuilding, and so the same folder can
+	// be deployed to a CDN unchanged. Empty means serve the built-in
+	// placeholder instead.
+	SiteDir string `yaml:"site_dir"`
+
 	// ModelDir holds one YAML file per model added through the admin UI.
 	// Keeping them out of the main file means installing a model never has to
 	// rewrite config.yaml and discard its comments.

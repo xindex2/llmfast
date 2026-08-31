@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -25,6 +26,9 @@ type APIKey struct {
 	CreatedAt int64  `json:"created_at"`
 	Disabled  bool   `json:"disabled"`
 	RPMLimit  int    `json:"rpm_limit"`
+	// UserID is the account that owns this key. 0 means the service's own key,
+	// issued before customer accounts existed.
+	UserID int64 `json:"user_id"`
 }
 
 // HashKey is the one place the secret-to-hash mapping is defined. Plain SHA-256
@@ -37,7 +41,13 @@ func HashKey(secret string) string {
 
 // CreateKey mints a key and returns the secret exactly once. Only the hash is
 // persisted, so a lost key must be replaced rather than recovered.
+// CreateKey mints a key owned by the service itself.
 func (s *Store) CreateKey(ctx context.Context, name string, rpmLimit int) (APIKey, string, error) {
+	return s.CreateKeyFor(ctx, 0, name, rpmLimit)
+}
+
+// CreateKeyFor mints a key owned by an account.
+func (s *Store) CreateKeyFor(ctx context.Context, userID int64, name string, rpmLimit int) (APIKey, string, error) {
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {
 		return APIKey{}, "", err
@@ -47,13 +57,15 @@ func (s *Store) CreateKey(ctx context.Context, name string, rpmLimit int) (APIKe
 	now := time.Now().Unix()
 
 	res, err := s.w.ExecContext(ctx,
-		`INSERT INTO api_keys (name, key_hash, key_prefix, created_at, rpm_limit) VALUES (?,?,?,?,?)`,
-		name, HashKey(secret), prefix, now, rpmLimit)
+		`INSERT INTO api_keys (name, key_hash, key_prefix, created_at, rpm_limit, user_id)
+		 VALUES (?,?,?,?,?,?)`,
+		name, HashKey(secret), prefix, now, rpmLimit, userID)
 	if err != nil {
 		return APIKey{}, "", err
 	}
 	id, _ := res.LastInsertId()
-	return APIKey{ID: id, Name: name, Prefix: prefix, CreatedAt: now, RPMLimit: rpmLimit}, secret, nil
+	return APIKey{ID: id, Name: name, Prefix: prefix, CreatedAt: now,
+		RPMLimit: rpmLimit, UserID: userID}, secret, nil
 }
 
 // LookupKey resolves a presented secret. It returns ErrKeyNotFound for both
@@ -73,9 +85,27 @@ func (s *Store) LookupKey(ctx context.Context, secret string) (APIKey, error) {
 	return k, nil
 }
 
+// ListKeys returns every key. Admin surface only.
 func (s *Store) ListKeys(ctx context.Context) ([]APIKey, error) {
-	rows, err := s.r.QueryContext(ctx,
-		`SELECT id, name, key_prefix, created_at, disabled, rpm_limit FROM api_keys ORDER BY id DESC`)
+	return s.listKeys(ctx, nil)
+}
+
+// ListKeysFor returns only the keys an account owns. This is the query the
+// customer dashboard uses, and scoping it here rather than filtering in a
+// handler means a missed check cannot leak another customer's keys.
+func (s *Store) ListKeysFor(ctx context.Context, userID int64) ([]APIKey, error) {
+	return s.listKeys(ctx, &userID)
+}
+
+func (s *Store) listKeys(ctx context.Context, userID *int64) ([]APIKey, error) {
+	q := `SELECT id, name, key_prefix, created_at, disabled, rpm_limit, user_id FROM api_keys`
+	args := []any{}
+	if userID != nil {
+		q += ` WHERE user_id = ?`
+		args = append(args, *userID)
+	}
+	q += ` ORDER BY id DESC`
+	rows, err := s.r.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +114,7 @@ func (s *Store) ListKeys(ctx context.Context) ([]APIKey, error) {
 	for rows.Next() {
 		var k APIKey
 		var disabled int
-		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.CreatedAt, &disabled, &k.RPMLimit); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.CreatedAt, &disabled, &k.RPMLimit, &k.UserID); err != nil {
 			return nil, err
 		}
 		k.Disabled = disabled == 1
@@ -118,4 +148,16 @@ func ExtractBearer(header string) string {
 		return strings.TrimSpace(header[len(p):])
 	}
 	return ""
+}
+
+// KeyOwner returns the account that owns a key, for authorising an action on
+// it. Returning ErrKeyNotFound for an unknown id means a caller probing for
+// other people's key ids learns nothing from the difference.
+func (s *Store) KeyOwner(ctx context.Context, id int64) (int64, error) {
+	var owner int64
+	err := s.r.QueryRowContext(ctx, `SELECT user_id FROM api_keys WHERE id = ?`, id).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrKeyNotFound
+	}
+	return owner, err
 }

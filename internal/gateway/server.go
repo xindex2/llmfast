@@ -140,7 +140,24 @@ func (s *Server) PublicHandler() http.Handler {
 	mux.HandleFunc("GET /models", s.handleModels)
 
 	mux.HandleFunc("GET /health", s.handleHealth)
-	mux.HandleFunc("GET /", s.handleRoot)
+
+	// Customer accounts, their keys, their usage, and the dashboard at /app.
+	s.publicRoutes(mux)
+
+	// The marketing site at the root, if one is configured. Registered last so
+	// none of the routes above can be shadowed by a file of the same name.
+	if dir := s.cfg.Server.SiteDir; dir != "" {
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			mux.Handle("GET /", staticHandler(os.DirFS(dir)))
+			s.log.Info("serving the site", "dir", dir)
+		} else {
+			s.log.Warn("server.site_dir is set but unreadable; serving the placeholder",
+				"dir", dir, "err", err)
+			mux.HandleFunc("GET /", s.handleRoot)
+		}
+	} else {
+		mux.HandleFunc("GET /", s.handleRoot)
+	}
 
 	return s.withRecovery(mux)
 }

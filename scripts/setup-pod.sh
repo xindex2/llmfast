@@ -255,6 +255,7 @@ server:
   admin_listen: "127.0.0.1:8090"
   admin_token: "$LLMFAST_ADMIN_TOKEN"
   db_path: "/workspace/llmfast.db"
+  site_dir: "$REPO/site"
   model_dir: "models.d"
   keepalive_interval: 10s
   raw_retention_days: 30

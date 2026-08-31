@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -67,8 +68,12 @@ CREATE TABLE IF NOT EXISTS api_keys (
   key_prefix  TEXT NOT NULL,
   created_at  INTEGER NOT NULL,
   disabled    INTEGER NOT NULL DEFAULT 0,
-  rpm_limit   INTEGER NOT NULL DEFAULT 0
+  rpm_limit   INTEGER NOT NULL DEFAULT 0,
+  -- Which account owns this key. 0 is the service's own key, issued before
+  -- customer accounts existed and visible only to admins.
+  user_id     INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_keys_user ON api_keys(user_id);
 
 -- Dashboard accounts. Separate from api_keys: those are machine credentials
 -- and are stored as a plain hash of a random secret, whereas these are chosen
@@ -78,7 +83,12 @@ CREATE TABLE IF NOT EXISTS admin_users (
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   created_at    INTEGER NOT NULL,
-  last_login    INTEGER NOT NULL DEFAULT 0
+  last_login    INTEGER NOT NULL DEFAULT 0,
+  -- "admin" runs the service; "user" is a customer who buys tokens. The table
+  -- is shared because the credential handling is identical and duplicating it
+  -- would mean two places to get password storage wrong.
+  role          TEXT NOT NULL DEFAULT 'admin',
+  disabled      INTEGER NOT NULL DEFAULT 0
 );
 
 -- Only the hash of a session token is kept, so the database is not a source of
@@ -174,6 +184,20 @@ func Open(path string) (*Store, error) {
 	if _, err := w.Exec(schema); err != nil {
 		w.Close()
 		return nil, fmt.Errorf("open database at %s: %w (check the path is writable)", path, err)
+	}
+	// CREATE TABLE IF NOT EXISTS does nothing to a table that already exists,
+	// so columns added later need an explicit ALTER. Each is attempted once and
+	// its "duplicate column" error ignored, which is the whole migration story
+	// this schema needs.
+	for _, alter := range []string{
+		`ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`,
+		`ALTER TABLE admin_users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE api_keys ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := w.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			w.Close()
+			return nil, fmt.Errorf("migrate database: %w", err)
+		}
 	}
 	r, err := sql.Open("sqlite", dsn)
 	if err != nil {
