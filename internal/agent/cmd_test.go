@@ -218,3 +218,36 @@ func TestMissingQuantizationIsExplained(t *testing.T) {
 		t.Error("reported the consequence rather than the cause")
 	}
 }
+
+// TestFreeTokenCommand pins the flags. FreeToken's whole point is choosing the
+// VRAM/RAM split from what it measures, so the cache is left on auto rather
+// than fixed from a spec sheet -- a static split is the thing the engine
+// exists to avoid.
+func TestFreeTokenCommand(t *testing.T) {
+	bin, args, _, err := BuildCommand(Spec{
+		HFID: "openai/gpt-oss-120b", ServedName: "openai/gpt-oss-120b",
+		Engine: "freetoken", MaxModelLen: 32768,
+	}, Runtime{Mode: "native"}, 18000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bin != "ft" {
+		t.Errorf("binary = %q, want ft", bin)
+	}
+	line := strings.Join(args, " ")
+	for _, want := range []string{
+		"serve", "--model openai/gpt-oss-120b", "--port 18000", "--host 0.0.0.0",
+		"--served-model-name openai/gpt-oss-120b", "--max-seq-len-override 32768",
+		"--moe-cache-auto",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("missing %q in: %s", want, line)
+		}
+	}
+	// vLLM flags must not leak into a different engine's command line.
+	for _, unwanted := range []string{"--max-num-seqs", "--enable-chunked-prefill", "--quantization"} {
+		if strings.Contains(line, unwanted) {
+			t.Errorf("vLLM flag %q leaked into the FreeToken command: %s", unwanted, line)
+		}
+	}
+}

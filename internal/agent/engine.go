@@ -76,6 +76,8 @@ func BuildCommand(s Spec, rt Runtime, port int) (bin string, args []string, env 
 	switch s.Engine {
 	case "vllm":
 		return buildVLLM(s, rt, port)
+	case "freetoken":
+		return buildFreeToken(s, rt, port)
 	case "llamacpp":
 		return buildLlamaCpp(s, rt, port)
 	}
@@ -247,6 +249,9 @@ func EngineAvailable(engine string, rt Runtime) bool {
 	case "llamacpp":
 		_, err := exec.LookPath("llama-server")
 		return err == nil
+	case "freetoken":
+		_, err := exec.LookPath("ft")
+		return err == nil
 	}
 	return false
 }
@@ -299,4 +304,48 @@ except Exception:
 			}
 		}
 	}()
+}
+
+// buildFreeToken launches FreeToken's OpenAI-compatible server.
+//
+// FreeToken is a mixture-of-experts engine that treats VRAM and host RAM as one
+// pool: hot experts are cached on the GPU and the rest stream from system
+// memory, with the split chosen from the machine's measured bandwidth. That
+// lets a card hold a model considerably larger than its VRAM, at the cost of
+// per-token speed -- so it is worth reaching for only when the alternative is
+// not serving the model at all.
+//
+// It needs an NVIDIA GPU and CUDA 13; there is no CPU-only mode. The planner
+// checks both before offering it.
+func buildFreeToken(s Spec, rt Runtime, port int) (string, []string, []string, error) {
+	if s.HFID == "" {
+		return "", nil, nil, fmt.Errorf("hf_id is required")
+	}
+	args := []string{
+		"serve",
+		"--model", s.HFID,
+		"--host", "0.0.0.0",
+		"--port", strconv.Itoa(port),
+		"--served-model-name", s.ServedName,
+	}
+	if s.MaxModelLen > 0 {
+		args = append(args, "--max-seq-len-override", strconv.Itoa(s.MaxModelLen))
+	}
+	// Let it size the expert cache from what it measures. A fixed split is the
+	// thing this engine exists to avoid, and a number we picked from a spec
+	// sheet would be exactly that.
+	args = append(args, "--moe-cache-auto")
+	args = append(args, s.ExtraArgs...)
+
+	env := []string{}
+	if rt.HFToken != "" {
+		env = append(env, "HF_TOKEN="+rt.HFToken)
+	}
+	if rt.HFCacheDir != "" {
+		env = append(env, "HF_HOME="+rt.HFCacheDir)
+	}
+	if os.Getenv("HF_HUB_ENABLE_HF_TRANSFER") != "" && !hfTransferInstalled() {
+		env = append(env, "HF_HUB_ENABLE_HF_TRANSFER=0")
+	}
+	return "ft", args, env, nil
 }

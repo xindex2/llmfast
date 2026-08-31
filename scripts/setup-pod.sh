@@ -171,6 +171,18 @@ else
   $PIP "vllm${VLLM_VERSION:+==$VLLM_VERSION}" --extra-index-url "https://download.pytorch.org/whl/$CUDA_TAG"
   $PIP hf_transfer
 
+  # FreeToken serves mixture-of-experts models larger than VRAM by streaming
+  # cold experts from host RAM. It needs CUDA 13 and nvcc on PATH, so it is
+  # installed only where that holds rather than failing the whole setup.
+  if [ "${INSTALL_FREETOKEN:-0}" = 1 ]; then
+    DRV_MAJOR=$(printf '%s' "${CUDA_TAG#cu}" | cut -c1-2)
+    if [ "${DRV_MAJOR:-0}" -ge 13 ] 2>/dev/null; then
+      $PIP "freetoken[accel]" || echo "  freetoken install failed; the other engines still work"
+    else
+      echo "  skipping freetoken: it needs a CUDA 13 driver and this host reports ${CUDA_TAG}"
+    fi
+  fi
+
   echo
   echo "installed: $("$VENV/bin/python" -c 'import vllm; print(vllm.__version__)' 2>/dev/null)"
 fi

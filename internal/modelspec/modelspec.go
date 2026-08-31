@@ -874,3 +874,12 @@ func quantBytesForDType(d string) float64 {
 	}
 	return 2 // bfloat16 and float16, which is nearly everything
 }
+
+// ActiveParamsOrAll is the parameter count that costs bandwidth per token:
+// the active experts on an MoE, everything on a dense model.
+func (i *Info) ActiveParamsOrAll() int64 {
+	if i.ActiveParams > 0 {
+		return i.ActiveParams
+	}
+	return i.Params
+}

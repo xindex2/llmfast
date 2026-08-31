@@ -854,6 +854,20 @@ function renderInspectResult(d) {
       </p>
     </div>
 
+    ${(d.plans || []).some(p => p.plan && p.plan.can_stream_experts) ? `
+    <div class="step">
+      <h3>Or stream the experts</h3>
+      <p class="hint">This is a mixture-of-experts model, so most of its weights are idle for any
+         given token. An expert-streaming engine keeps the hot ones on the card and pulls the rest
+         from system RAM, which lets it serve a model larger than your VRAM — at fewer tokens per
+         second than a model that fits outright. Worth it when the alternative is not serving it
+         at all; not worth it when something smaller already fits.</p>
+      <p class="hint">Needs <b>FreeToken</b> on the node: an NVIDIA GPU, a CUDA 13 driver
+         (r580+), and enough system RAM to hold the overflow. Install it with
+         <code>uv pip install "freetoken[accel]"</code>, then choose the
+         <code>freetoken</code> engine below.</p>
+    </div>` : ''}
+
     ${d.quant_candidates && d.quant_candidates.length ? `
     <div class="step">
       <h3>This model needs a smaller checkpoint</h3>

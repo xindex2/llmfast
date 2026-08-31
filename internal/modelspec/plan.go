@@ -144,6 +144,9 @@ type Plan struct {
 	// NeedsQuantized reports that the model does not fit at full precision but
 	// would fit if a pre-quantized publication of it were used instead.
 	NeedsQuantized bool `json:"needs_quantized"`
+	// CanStreamExperts reports that the weights overflow VRAM but would fit in
+	// VRAM plus host RAM, which an expert-streaming engine can serve.
+	CanStreamExperts bool `json:"can_stream_experts"`
 	// RunnableQuants lists the checkpoint formats this node's GPUs can execute.
 	// Offering an operator an NVFP4 repository for an Ampere card would only
 	// send them round the loop again to be told it does not work.
@@ -308,6 +311,25 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 			label := map[string]string{"fp8": "fp8", "awq": "AWQ or GPTQ 4-bit"}[f]
 			smaller = append(smaller, fmt.Sprintf("%s (~%s)", label, humanBytes(w)))
 		}
+		// A mixture-of-experts model that overflows VRAM is not necessarily out
+		// of reach: FreeToken keeps hot experts on the card and streams the
+		// rest from host RAM, so the usable pool is VRAM plus system memory.
+		// Only worth suggesting for MoE -- a dense model reads every weight per
+		// token, so streaming it over PCIe is hopeless rather than merely slow.
+		if info.IsMoE && a.name != "unknown" {
+			pool := usable + int64(float64(node.RAMBytes)*0.75)
+			if p.WeightBytes < pool {
+				p.CanStreamExperts = true
+				p.Blockers = append(p.Blockers, fmt.Sprintf(
+					"this is a mixture-of-experts model with %s active of %s total, so an "+
+						"expert-streaming engine can serve it from VRAM plus host RAM (%s "+
+						"together). That trades per-token speed for fitting at all, and needs "+
+						"an NVIDIA GPU on a CUDA 13 driver",
+					humanBytes(int64(float64(info.ActiveParamsOrAll())*quantBytes(quant))),
+					humanBytes(p.WeightBytes), humanBytes(pool)))
+			}
+		}
+
 		if len(smaller) > 0 {
 			p.NeedsQuantized = true
 			for _, f := range []string{"fp8", "awq", "gptq", "nvfp4"} {
