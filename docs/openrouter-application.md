@@ -174,6 +174,54 @@ sections and expects you to delete the one you do not operate.
 
 ---
 
+## Getting paid
+
+The direction of the money surprises people, so state it plainly: **OpenRouter
+is your customer.** They hold an API key on your gateway, they send traffic to
+it, and they pay you for the tokens you serve. Nothing flows the other way.
+
+Their requirement is one sentence:
+
+> For OpenRouter to use the provider we must be able to pay for inference
+> automatically. This can be done via auto top up or invoicing.
+
+And the price you publish is the price you receive — they take nothing off it:
+
+> We pass through the pricing of the underlying providers without any markup,
+> so you pay the same rate as you would directly with the provider.
+
+Their revenue is a fee charged to the end customer when they buy credits (5.5%
+via Stripe, 5% via crypto), which never touches your side of the transaction.
+So a model listed at $2.40 per million output tokens earns $2.40 per million.
+
+### Which mechanism to offer
+
+**Auto top-up** means OpenRouter keeps a credit balance on this gateway and
+refills it when it runs low. It is what they prefer, because it needs no human
+in the loop at either end. It also needs a balance to draw down, and this
+gateway has no concept of one -- usage is metered and priced per request, but
+nothing is prepaid or decremented. Building it means a balance column, a
+debit on each request, a threshold webhook and a payment processor.
+
+**Invoicing** means you total their usage each month and bill them. Everything
+needed to produce that total already exists: every request stores `CostUSD`
+against the `APIKeyID` that made it, and `store.UsageFor` sums exactly that
+over a date range. An invoice is that number, a period, and your company
+details on a PDF.
+
+Start with invoicing. It is the smaller build by a wide margin, and it does not
+gate the application -- you can agree terms with them by email once accepted.
+
+### What is not a code problem
+
+You need a legal entity that can issue an invoice and receive a business
+payment -- a registered company, a bank account that accepts international
+wires or an equivalent, and a tax position you can state on the invoice. That
+is the part with a lead time measured in weeks, so start it before the
+application rather than after acceptance.
+
+---
+
 ## Before you submit — checklist
 
 - [ ] `/v1/models` is reachable from the public internet **without** credentials
@@ -184,5 +232,6 @@ sections and expects you to delete the one you do not operate.
 - [ ] Privacy policy and terms are live at the URLs you gave
 - [ ] The Data Policy answer matches both the privacy policy and the `zdr` flags
 - [ ] A dedicated API key exists for OpenRouter (Admin → API Keys)
-- [ ] Billing is arranged — they require auto top-up or invoicing to pay you
+- [ ] Billing is arranged — invoicing or auto top-up (see "Getting paid")
+- [ ] An entity that can invoice and receive payment exists, with a bank account
 - [ ] `is_ready: false` on anything not ready to take live traffic
