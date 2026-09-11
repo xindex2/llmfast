@@ -64,6 +64,11 @@ type Info struct {
 	// PublishedQuant is set when the checkpoint on HuggingFace is already
 	// quantized, e.g. "fp8". The download is then that size, not bf16.
 	PublishedQuant string `json:"published_quant,omitempty"`
+
+	// CheckpointBytes is what the weights weigh as published, measured from
+	// the shard sizes rather than inferred from a precision. Zero when the
+	// registry did not say. See hfModelResponse.weightBytes.
+	CheckpointBytes int64 `json:"checkpoint_bytes,omitempty"`
 	// HasVision and HasAudio mark extra input towers. Their parameters are
 	// included in the total count, but they also need activation memory during
 	// encoding that the text-only arithmetic does not model.
@@ -87,6 +92,39 @@ type hfModelResponse struct {
 		Total      int64            `json:"total"`
 		Parameters map[string]int64 `json:"parameters"`
 	} `json:"safetensors"`
+	// Siblings carries a size per file, but only when the request asks for
+	// blobs. It is how the real weight of a checkpoint is learned.
+	Siblings []struct {
+		Filename string `json:"rfilename"`
+		Size     int64  `json:"size"`
+	} `json:"siblings"`
+}
+
+// weightBytes sums the weight shards as published.
+//
+// It exists because parameters x bytes-per-quant is a lie on any checkpoint
+// that mixes precisions, and the interesting checkpoints now all do. DeepSeek
+// V4.1 Flash declares quant_method fp8 while storing its experts at fp4, and
+// HuggingFace reports those experts as 557B parameters of "I8" -- the container
+// they are packed into, two weights to the byte, not their width. Multiplying
+// that by one byte gives 711 GiB against a real 510 GB, which is not a rounding
+// error: it is the difference between fitting on eight H100s and not.
+//
+// File sizes need no such inference. They are what has to be read off disk and
+// held in VRAM, whatever precision games the checkpoint plays inside.
+func (m *hfModelResponse) weightBytes() int64 {
+	var total int64
+	for _, f := range m.Siblings {
+		switch {
+		case strings.HasPrefix(filepath.Base(f.Filename), "."):
+			continue // a cache file left by some other tool
+		case strings.HasSuffix(f.Filename, ".safetensors"),
+			strings.HasSuffix(f.Filename, ".gguf"),
+			strings.HasSuffix(f.Filename, ".bin"):
+			total += f.Size
+		}
+	}
+	return total
 }
 
 // hfConfig is the subset of a model's config.json that determines memory use.
@@ -201,7 +239,7 @@ func (c *Client) Fetch(ctx context.Context, id string) (*Info, error) {
 	}
 
 	var meta hfModelResponse
-	if err := c.getJSON(ctx, hfAPI+"/api/models/"+id, &meta); err != nil {
+	if err := c.getJSON(ctx, hfAPI+"/api/models/"+id+"?blobs=true", &meta); err != nil {
 		return nil, fmt.Errorf("look up %s: %w", id, err)
 	}
 	var raw hfConfig
@@ -252,6 +290,7 @@ func (c *Client) Fetch(ctx context.Context, id string) (*Info, error) {
 		info.PublishedQuant = cfg.QuantizationConfig.scheme()
 	}
 
+	info.CheckpointBytes = meta.weightBytes()
 	if meta.Safetensors != nil {
 		info.Params = meta.Safetensors.Total
 		// The parameters map is keyed by dtype (BF16, F32, ...). The dominant
@@ -855,6 +894,7 @@ func fetchLocal(dir string) (*Info, error) {
 		}
 	}
 	info.LocalGGUF = gguf
+	info.CheckpointBytes = bytes
 	perParam := quantBytesForDType(info.DType)
 	if bytes > 0 {
 		info.Params = int64(float64(bytes) / perParam)
@@ -867,10 +907,16 @@ func fetchLocal(dir string) (*Info, error) {
 // so a directory's size on disk can be turned back into a parameter count.
 func quantBytesForDType(d string) float64 {
 	switch strings.ToLower(d) {
-	case "float32", "f32":
+	case "float32", "f32", "i32", "u32":
 		return 4
-	case "float8_e4m3fn", "f8_e4m3":
+	case "float8_e4m3fn", "float8_e5m2", "f8_e4m3", "f8_e5m2",
+		"int8", "i8", "u8":
 		return 1
+	case "i4", "u4", "f4", "fp4", "nvfp4":
+		// Sub-byte weights are packed two to a byte. HuggingFace usually
+		// reports the container instead -- fp4 experts arrive labelled I8 --
+		// so this arm is a backstop, not the common path.
+		return 0.5
 	}
 	return 2 // bfloat16 and float16, which is nearly everything
 }

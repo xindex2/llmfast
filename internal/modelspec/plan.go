@@ -162,6 +162,21 @@ type Plan struct {
 	ViabilityNote string `json:"viability_note"`
 }
 
+// weightBytes is how much VRAM the weights need.
+//
+// When the checkpoint is being served exactly as published and its shards have
+// been measured, that measurement is the answer -- it already accounts for
+// mixed precisions, packed sub-byte tensors and the scale tensors that ride
+// along with them, none of which a single bytes-per-parameter figure can
+// express. Estimating is for the other case: re-quantizing to a format this
+// repository does not publish, where there is nothing yet to measure.
+func weightBytes(info *Info, quant string, asPublished bool) int64 {
+	if asPublished && info.CheckpointBytes > 0 {
+		return info.CheckpointBytes
+	}
+	return int64(float64(info.Params) * quantBytes(quant))
+}
+
 // quantBytes maps a quantization name to bytes per parameter.
 func quantBytes(q string) float64 {
 	switch strings.ToLower(q) {
@@ -274,7 +289,7 @@ func planGPU(info *Info, node *Node, wantContext int) *Plan {
 	// TP=1, where it would in fact have to live inside one 141 GiB card.
 	usable := int64(float64(perGPUVRAM(node)*int64(tp)) * defaultGPUMemUtil)
 	p.Quantization = quant
-	p.WeightBytes = int64(float64(info.Params) * quantBytes(quant))
+	p.WeightBytes = weightBytes(info, quant, p.QuantFromCheckpoint)
 	p.KVBudgetBytes = usable - p.WeightBytes
 
 	if p.KVBudgetBytes <= 0 {
